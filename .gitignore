@@ -1,0 +1,15 @@
+# Fichiers système macOS
+.DS_Store
+
+# Fichiers temporaires ou de sauvegarde courants
+*.log
+*.backup*
+*~
+*.swp
+*.swo
+
+# Répertoires spécifiques à certains outils (si utilisés)
+.vscode/
+.idea/
+__pycache__/
+
