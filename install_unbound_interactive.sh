@@ -729,7 +729,183 @@ update_all() {
     msg_ok "Mise à jour terminée avec succès!"
 }
 
+# --- Fonction d'Optimisation de la Configuration ---
+
+optimize_unbound_config() {
+    header_info
+    echo -e "${INFO} Optimisation de la configuration Unbound...\n"
+    
+    # Vérifier qu'Unbound est installé
+    if ! systemctl is-active --quiet unbound 2>/dev/null; then
+        msg_error "Unbound n'est pas installé ou n'est pas actif."
+        return 1
+    fi
+    
+    # Sélection du fournisseur DNS upstream
+    select_dns_upstream
+    
+    # Calculer les paramètres optimisés
+    msg_info "Analyse des ressources système"
+    calculate_optimized_settings
+    msg_ok "Ressources: ${CPU_CORES} CPU, ${RAM_MB} MB RAM"
+    
+    # Sauvegarde de la configuration existante
+    CONF_FILE="/etc/unbound/unbound.conf"
+    msg_info "Sauvegarde de la configuration actuelle"
+    cp "$CONF_FILE" "${CONF_FILE}.backup.$(date +%Y%m%d%H%M%S)"
+    msg_ok "Sauvegarde créée"
+    
+    # Arrêter Unbound
+    msg_info "Arrêt du service Unbound"
+    systemctl stop unbound
+    msg_ok "Service arrêté"
+    
+    # Générer la nouvelle configuration
+    msg_info "Génération de la configuration optimisée"
+    cat > "$CONF_FILE" <<EOF
+# ==================================================================
+# Configuration Unbound ULTRA-OPTIMISÉE pour AdGuard Home sur LXC
+# Régénérée le $(date)
+# Ressources détectées : ${CPU_CORES} CPU / ${RAM_MB}MB RAM
+# ==================================================================
+
+server:
+    interface: 127.0.0.1
+    port: ${UNBOUND_PORT}
+    do-ip4: yes
+    do-ip6: yes
+    do-udp: yes
+    do-tcp: yes
+    tls-cert-bundle: "/etc/ssl/certs/ca-certificates.crt"
+
+    access-control: 127.0.0.0/8 allow
+    access-control: ::1/128 allow
+
+    num-threads: ${NUM_THREADS}
+    msg-cache-slabs: ${CACHE_SLABS}
+    rrset-cache-slabs: ${CACHE_SLABS}
+    infra-cache-slabs: ${CACHE_SLABS}
+    key-cache-slabs: ${CACHE_SLABS}
+    rrset-cache-size: ${RRSET_CACHE_SIZE}
+    msg-cache-size: ${MSG_CACHE_SIZE}
+    so-reuseport: yes
+    so-rcvbuf: ${SO_BUF}
+    so-sndbuf: ${SO_BUF}
+
+    prefetch: yes
+    prefetch-key: yes
+    serve-expired: yes
+    serve-expired-ttl: 86400
+    serve-expired-ttl-reset: yes
+    serve-expired-client-timeout: 1800
+
+    # Optimisations avancées (adaptées aux ressources)
+    outgoing-range: ${OUTGOING_RANGE}
+    num-queries-per-thread: ${QUERIES_PER_THREAD}
+    jostle-timeout: 300
+    infra-host-ttl: 900
+    infra-cache-numhosts: ${INFRA_CACHE_HOSTS}
+    unwanted-reply-threshold: 10000000
+    edns-buffer-size: 1232
+    max-udp-size: 1232
+    cache-min-ttl: 300
+    cache-max-ttl: 86400
+    cache-max-negative-ttl: 3600
+    neg-cache-size: ${NEG_CACHE_SIZE}
+    delay-close: 10000
+
+    minimal-responses: yes
+    qname-minimisation: yes
+    qname-minimisation-strict: yes
+
+    hide-identity: yes
+    hide-version: yes
+    harden-glue: yes
+    harden-dnssec-stripped: yes
+    use-caps-for-id: yes
+    deny-any: yes
+    harden-below-nxdomain: yes
+    harden-referral-path: yes
+    harden-algo-downgrade: yes
+
+    auto-trust-anchor-file: "/var/lib/unbound/root.key"
+    root-hints: "/usr/share/dns/root.hints"
+    val-log-level: 1
+
+    private-address: 192.168.0.0/16
+    private-address: 172.16.0.0/12
+    private-address: 10.0.0.0/8
+    private-address: 169.254.0.0/16
+    private-address: fd00::/8
+    private-address: fe80::/10
+    private-domain: "local"
+    private-domain: "lan"
+    private-domain: "home.arpa"
+
+    extended-statistics: yes
+    statistics-interval: 0
+    statistics-cumulative: yes
+
+forward-zone:
+    name: "."
+    forward-tls-upstream: yes
+$(get_upstream_config)
+
+remote-control:
+    control-enable: yes
+    control-interface: 127.0.0.1
+    control-port: 8953
+    server-key-file: "/etc/unbound/unbound_server.key"
+    server-cert-file: "/etc/unbound/unbound_server.pem"
+    control-key-file: "/etc/unbound/unbound_control.key"
+    control-cert-file: "/etc/unbound/unbound_control.pem"
+EOF
+    msg_ok "Configuration générée"
+    
+    # Vérifier la syntaxe
+    msg_info "Vérification de la syntaxe"
+    if unbound-checkconf "$CONF_FILE" &>/dev/null; then
+        msg_ok "Syntaxe valide"
+    else
+        msg_error "Erreur de syntaxe - restauration de la sauvegarde"
+        cp "${CONF_FILE}.backup."* "$CONF_FILE" 2>/dev/null || true
+        systemctl start unbound
+        return 1
+    fi
+    
+    # Redémarrer Unbound
+    msg_info "Redémarrage du service Unbound"
+    systemctl start unbound
+    sleep 2
+    
+    if systemctl is-active --quiet unbound; then
+        msg_ok "Service Unbound redémarré"
+        
+        # Préchauffage du cache
+        warmup_cache
+        
+        echo ""
+        echo -e "${GN}╔════════════════════════════════════════════════════════════════╗${CL}"
+        echo -e "${GN}║           Optimisation Terminée avec Succès !                  ║${CL}"
+        echo -e "${GN}╚════════════════════════════════════════════════════════════════╝${CL}"
+        echo ""
+        echo -e "${YW}Nouveaux paramètres appliqués:${CL}"
+        echo -e "  - Threads: ${GN}${NUM_THREADS}${CL}"
+        echo -e "  - Slabs: ${GN}${CACHE_SLABS}${CL}"
+        echo -e "  - Cache RRset: ${GN}${RRSET_CACHE_SIZE}${CL}"
+        echo -e "  - Cache Message: ${GN}${MSG_CACHE_SIZE}${CL}"
+        echo -e "  - Infra Cache Hosts: ${GN}${INFRA_CACHE_HOSTS}${CL}"
+        echo -e "  - Outgoing Range: ${GN}${OUTGOING_RANGE}${CL}"
+        echo -e "  - DNS Upstream: ${GN}${SELECTED_UPSTREAM}${CL}"
+        echo ""
+    else
+        msg_error "Échec du redémarrage d'Unbound"
+        return 1
+    fi
+}
+
 # --- Fonction d'Installation Complète ---
+
 
 full_install() {
     header_info
@@ -778,12 +954,13 @@ show_menu() {
     header_info
     
     CHOICE=$(whiptail --title "AdGuard Home & Unbound Manager" --menu \
-        "Choisissez une option:" 20 90 5 \
+        "Choisissez une option:" 22 90 7 \
         "1" "Installation Complète (AdGuard Home + Unbound)" \
         "2" "Mise à jour Complète (AdGuard Home + Unbound)" \
-        "3" "Installer uniquement Unbound" \
-        "4" "Afficher les Statistiques Unbound" \
-        "5" "Quitter" \
+        "3" "Optimiser la Configuration Unbound" \
+        "4" "Installer uniquement Unbound" \
+        "5" "Afficher les Statistiques Unbound" \
+        "6" "Quitter" \
         3>&1 1>&2 2>&3)
     
     case $CHOICE in
@@ -794,14 +971,17 @@ show_menu() {
             update_all
             ;;
         3)
-            install_unbound
+            optimize_unbound_config
             ;;
         4)
+            install_unbound
+            ;;
+        5)
             header_info
             echo -e "${INFO} Statistiques Unbound:\n"
             unbound-control stats_noreset 2>/dev/null || msg_warn "unbound-control non disponible"
             ;;
-        5)
+        6)
             echo -e "${INFO} Au revoir!"
             exit 0
             ;;
