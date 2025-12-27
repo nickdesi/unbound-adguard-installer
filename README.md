@@ -8,24 +8,38 @@ Inspiré par le style des [Proxmox VE Helper-Scripts](https://tteck.github.io/Pr
 
 ![Screenshot](https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/images/logo.png)
 
+## 🏗️ Architecture DNS
+
+```mermaid
+graph TD
+    Client[Clients Reseau] -->|Requete DNS Port 53| AGH["AdGuard Home (Filtrage)"]
+    AGH -->|Forward Port 5335| Unbound["Unbound Local (Recursivité)"]
+    Unbound -->|DoT / DNSSEC| Upstream["DNS Upstream (Cloudflare, Quad9, etc.)"]
+    Upstream -->|Reponse| Unbound
+    Unbound -->|Cache DNS| AGH
+    AGH -->|Reponse Filtree| Client
+```
+
 ## ✨ Fonctionnalités
 
-### Installation
+### 🚀 Installation & Mise à jour
 
-- **AdGuard Home** : Téléchargement automatique de la dernière version depuis GitHub
-- **Unbound** : Configuration optimisée selon les ressources CPU/RAM détectées
-- **Intégration automatique** : Configuration d'Unbound comme DNS amont dans AdGuard Home
+- **AdGuard Home** : Téléchargement automatique (GitHub) avec **vérification d'intégrité SHA256**.
+- **Unbound** : Installation et configuration récursive haute performance.
+- **Mise à jour Intelligente** : Un seul clic pour tout mettre à jour (Logique de préservation réseau incluse).
 
-### Mise à jour
+### ⚙️ Optimisation Dynamique (Multi-Tiers)
 
-- **AdGuard Home** : Vérification et mise à jour du binaire depuis GitHub
-- **Unbound** : Mise à jour via APT + rafraîchissement des Root Hints DNS
+Le script analyse vos ressources (CPU/RAM) et adapte dynamiquement plus de 15 paramètres Unbound (`slabs`, `threads`, `caches`, `infra-cache`, etc.) selon 5 paliers :
 
-### Optimisation
+- **Micro** (< 512MB) | **Petit** (512MB-768MB) | **Moyen** (768MB-1GB) | **Grand** (1-2GB) | **Premium** (> 2GB)
 
-- Calcul automatique des paramètres Unbound (threads, caches, buffers)
-- Sécurité renforcée (DNSSEC, DoT, hardening)
-- Gestion de systemd-resolved et des conflits de ports
+### 🛡️ Sécurité & Performance
+
+- **DNS-over-TLS (DoT)** : Vos requêtes amont sont chiffrées.
+- **DNSSEC** : Validation de l'authenticité des réponses.
+- **Sysctl Tuning** : Optimisation de la pile TCP/UDP du LXC pour le trafic DNS.
+- **Cache Warm-up** : Préchauffage automatique des domaines populaires après installation.
 
 ## 🚀 Installation Rapide
 
@@ -48,60 +62,49 @@ sudo ./install_unbound_interactive.sh
 Usage: ./install_unbound_interactive.sh [OPTION]
 
 Options:
-  --install        Installation complète (AdGuard Home + Unbound)
-  --update         Mise à jour complète
+  --install        Installation complete (AdGuard Home + Unbound)
+  --update         Mise a jour complete
   --unbound-only   Installer uniquement Unbound
   --help           Afficher l'aide
 
 Sans option, le script affiche un menu interactif.
 ```
 
-## 🎛️ Menu Interactif
+## 🎛️ Menu Interactif (v2.0.0)
 
-Lancez le script sans arguments pour accéder au menu :
+1. **Installation Complete** : Déploiement total AdGuard Home + Unbound.
+2. **Mise a jour Complete** : Tout mettre à jour vers les dernières versions.
+3. **Optimiser la Configuration Unbound** : Recalibre Unbound sur une installation existante (idéal si vous changez les ressources du LXC ou d'Upstream).
+4. **Installer uniquement Unbound** : Pour ajouter Unbound à un AdGuard Home existant.
+5. **Afficher les Statistiques Unbound** : Consultez l'efficacité de votre cache.
+6. **Quitter**
 
-1. **Installation Complète** - AdGuard Home + Unbound + configuration automatique
-2. **Mise à jour Complète** - Met à jour les deux composants
-3. **Installer uniquement Unbound** - Pour les utilisateurs ayant déjà AdGuard Home
-4. **Afficher les Statistiques** - Statistiques du cache Unbound
-5. **Quitter**
+## ⚙️ Configuration par défaut
 
-## ⚙️ Configuration Générée
+- **Unbound** : Port `5335` (localhost)
+- **AdGuard Home UI** : Port `3000`
+- **Logs** : `/var/log/adguard-unbound-installer.log`
 
-### Unbound
+## 🔧 Dépannage & Logs
 
-- **Port** : `5335` (localhost uniquement)
-- **Threads** : Automatiquement ajusté selon vos cœurs CPU
-- **Cache** : Optimisé selon votre RAM disponible
-- **Sécurité** : DNS-over-TLS vers Cloudflare, DNSSEC activé
-
-### AdGuard Home
-
-- **Interface Web** : `http://<IP>:3000`
-- **DNS Upstream** : `127.0.0.1:5335` (Unbound local)
-
-## 🔧 Dépannage
-
-### Unbound ne démarre pas
+### Voir les logs du script
 
 ```bash
-sudo systemctl status unbound.service
-sudo journalctl -xeu unbound.service
+tail -f /var/log/adguard-unbound-installer.log
+```
+
+### Vérifier les services
+
+```bash
+sudo systemctl status AdGuardHome
+sudo systemctl status unbound
 sudo unbound-checkconf
 ```
 
-### Pas de résolution DNS
+### Test de résolution directe (Unbound)
 
 ```bash
 dig @127.0.0.1 -p 5335 google.com
-sudo unbound-control stats_noreset
-```
-
-### Voir les logs en temps réel
-
-```bash
-sudo journalctl -u unbound -f
-sudo journalctl -u AdGuardHome -f
 ```
 
 ## 📜 Licence
