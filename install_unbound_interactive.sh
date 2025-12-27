@@ -171,12 +171,12 @@ EOF
 # --- Sélection DNS Upstream ---
 
 select_dns_upstream() {
-    CHOICE=$(whiptail --title "Sélection DNS Upstream" --menu \
-        "Choisissez votre fournisseur DNS-over-TLS upstream:" 15 70 4 \
+    CHOICE=$(whiptail --title "Selection DNS Upstream" --menu \
+        "Choisissez votre fournisseur DNS-over-TLS upstream:" 15 80 4 \
         "1" "Cloudflare (1.1.1.1) - Rapide, global" \
-        "2" "Quad9 (9.9.9.9) - Sécurisé, bloque malwares" \
-        "3" "Mullvad (194.242.2.2) - Vie privée maximale" \
-        "4" "Personnalisé (entrée manuelle)" \
+        "2" "Quad9 (9.9.9.9) - Securise, bloque malwares" \
+        "3" "Mullvad (194.242.2.2) - Vie privee maximale" \
+        "4" "Personnalise (entree manuelle)" \
         3>&1 1>&2 2>&3) || CHOICE="1"
     
     case $CHOICE in
@@ -1011,8 +1011,8 @@ show_menu() {
     
     CHOICE=$(whiptail --title "AdGuard Home & Unbound Manager" --menu \
         "Choisissez une option:" 22 90 7 \
-        "1" "Installation Complète (AdGuard Home + Unbound)" \
-        "2" "Mise à jour Complète (AdGuard Home + Unbound)" \
+        "1" "Installation Complete (AdGuard Home + Unbound)" \
+        "2" "Mise a jour Complete (AdGuard Home + Unbound)" \
         "3" "Optimiser la Configuration Unbound" \
         "4" "Installer uniquement Unbound" \
         "5" "Afficher les Statistiques Unbound" \
