@@ -1,96 +1,119 @@
-# Unbound Installer pour AdGuard Home sur Proxmox LXC
+# AdGuard Home & Unbound All-in-One Installer pour Proxmox LXC
 
-Ce script Bash installe et configure **Unbound** comme un résolveur DNS récursif local sécurisé et performant, spécifiquement conçu pour fonctionner en tandem avec **AdGuard Home** dans un conteneur **Proxmox LXC** (basé sur Debian/Ubuntu).
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Il pose des questions interactives sur les ressources (CPU/RAM) de votre LXC pour générer une **configuration Unbound ultra-optimisée**, axée sur la sécurité maximale et la rapidité.
+Ce script Bash installe et configure **AdGuard Home** et **Unbound** comme solution DNS complète sur un conteneur **Proxmox LXC** (basé sur Debian/Ubuntu).
 
-## Fonctionnalités Clés
+Inspiré par le style des [Proxmox VE Helper-Scripts](https://tteck.github.io/Proxmox/), il propose une **interface interactive** (menu Whiptail) et une configuration **ultra-optimisée** basée sur les ressources de votre système.
 
-*   **Installation Automatisée** : Installe Unbound et les dépendances nécessaires (`ca-certificates`, `dnsutils`).
-*   **Configuration Interactive Optimisée** : Adapte automatiquement les paramètres critiques (threads, caches, buffers) en fonction des cœurs CPU et de la RAM que vous spécifiez.
-*   **Sécurité Renforcée** :
-    *   Configuration durcie (`harden-*` directives).
-    *   DNS-over-TLS (DoT) activé par défaut vers Cloudflare (facilement modifiable).
-    *   Validation DNSSEC activée et renforcée.
-    *   Protection contre le DNS Rebinding (`private-address`).
-    *   Minimisation QNAME (mode strict) pour la confidentialité.
-    *   Refus des requêtes ANY (`deny-any`).
-*   **Performance** :
-    *   Optimisé pour une faible latence (`prefetch`, `serve-expired`).
-    *   Utilisation efficace des ressources CPU/RAM.
-    *   `so-reuseport` activé pour de meilleures performances UDP.
-*   **Intégration AdGuard Home Facile** : Unbound écoute sur `127.0.0.1:5335`, prêt à être utilisé comme unique serveur amont dans AdGuard Home.
-*   **Gestion `systemd-resolved`** : Désactive `systemd-resolved` s'il risque d'interférer.
-*   **Configuration `unbound-control`** : Active et configure `unbound-control` pour la gestion et les statistiques.
-*   **Configuration Pare-feu (UFW)** : Ajoute automatiquement les règles UFW nécessaires si UFW est détecté.
-*   **Test Intégré** : Vérifie la syntaxe de la configuration et teste la résolution DNS après installation.
+![Screenshot](https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/images/logo.png)
 
-## Prérequis
+## ✨ Fonctionnalités
 
-*   Un conteneur Proxmox LXC fonctionnel (basé sur Debian ou Ubuntu).
-*   AdGuard Home déjà installé et fonctionnel dans ce même LXC.
-*   Accès SSH ou console au LXC avec les privilèges `sudo`.
-*   Connectivité Internet pour télécharger les paquets.
+### Installation
 
-## Utilisation
+- **AdGuard Home** : Téléchargement automatique de la dernière version depuis GitHub
+- **Unbound** : Configuration optimisée selon les ressources CPU/RAM détectées
+- **Intégration automatique** : Configuration d'Unbound comme DNS amont dans AdGuard Home
 
-1.  **Connectez-vous** à votre LXC AdGuard Home.
-2.  **Téléchargez le script** (ou clonez le dépôt) :
-    ```
-    # Option 1: wget
-    wget https://raw.githubusercontent.com/VOTRE_USER/VOTRE_REPO/main/install_unbound_interactive.sh
+### Mise à jour
 
-    # Option 2: curl
-    curl -o install_unbound_interactive.sh https://raw.githubusercontent.com/VOTRE_USER/VOTRE_REPO/main/install_unbound_interactive.sh
+- **AdGuard Home** : Vérification et mise à jour du binaire depuis GitHub
+- **Unbound** : Mise à jour via APT + rafraîchissement des Root Hints DNS
 
-    # Option 3: git clone (si vous clonez le dépôt entier)
-    # git clone https://github.com/VOTRE_USER/VOTRE_REPO.git
-    # cd VOTRE_REPO
-    ```
-    *(Remplacez `VOTRE_USER/VOTRE_REPO` par le chemin réel de votre dépôt GitHub une fois créé)*
-3.  **Rendez le script exécutable** :
-    ```
-    chmod +x install_unbound_interactive.sh
-    ```
-4.  **Exécutez le script avec `sudo`** :
-    ```
-    sudo bash install_unbound_interactive.sh
-    ```
-5.  **Répondez aux questions** concernant le nombre de cœurs CPU et la quantité de RAM (en Mo) alloués à votre LXC.
-6.  Le script va procéder à l'installation et à la configuration. Suivez les instructions affichées.
+### Optimisation
 
-## Post-Installation
+- Calcul automatique des paramètres Unbound (threads, caches, buffers)
+- Sécurité renforcée (DNSSEC, DoT, hardening)
+- Gestion de systemd-resolved et des conflits de ports
 
-Après l'exécution réussie du script :
+## 🚀 Installation Rapide
 
-1.  Accédez à l'interface web de votre **AdGuard Home**.
-2.  Allez dans `Paramètres` -> `Paramètres DNS`.
-3.  Dans la section `Serveurs DNS en amont`, **supprimez tous les serveurs existants**.
-4.  **Ajoutez** `127.0.0.1:5335` comme unique serveur DNS en amont.
-5.  Cliquez sur `Appliquer`.
-6.  (Optionnel mais recommandé) Choisissez `Requêtes parallèles` comme mode de fonctionnement.
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/nickdesi/unbound-adguard-installer/main/install_unbound_interactive.sh)"
+```
 
-Votre AdGuard Home utilisera maintenant votre instance Unbound locale, sécurisée et optimisée comme résolveur DNS.
+Ou clonez le dépôt :
 
-## Dépannage
+```bash
+git clone https://github.com/nickdesi/unbound-adguard-installer.git
+cd unbound-adguard-installer
+chmod +x install_unbound_interactive.sh
+sudo ./install_unbound_interactive.sh
+```
 
-*   **Unbound ne démarre pas ?** Vérifiez les erreurs :
-    ```
-    sudo systemctl status unbound.service
-    sudo journalctl -xeu unbound.service
-    sudo unbound-checkconf
-    ```
-*   **Pas de résolution DNS ?**
-    *   Vérifiez les logs Unbound (`journalctl -u unbound -f`).
-    *   Testez Unbound directement : `dig @127.0.0.1 -p 5335 google.com`
-    *   Vérifiez les logs AdGuard Home.
-    *   Assurez-vous que le pare-feu (UFW ou autre) ne bloque pas le trafic sur `127.0.0.1:5335`.
+## 📋 Options de Ligne de Commande
 
-## Licence
+```text
+Usage: ./install_unbound_interactive.sh [OPTION]
 
-Ce projet est sous licence MIT. Voir le fichier `LICENSE` pour plus de détails.
+Options:
+  --install        Installation complète (AdGuard Home + Unbound)
+  --update         Mise à jour complète
+  --unbound-only   Installer uniquement Unbound
+  --help           Afficher l'aide
 
-## Disclaimer
+Sans option, le script affiche un menu interactif.
+```
+
+## 🎛️ Menu Interactif
+
+Lancez le script sans arguments pour accéder au menu :
+
+1. **Installation Complète** - AdGuard Home + Unbound + configuration automatique
+2. **Mise à jour Complète** - Met à jour les deux composants
+3. **Installer uniquement Unbound** - Pour les utilisateurs ayant déjà AdGuard Home
+4. **Afficher les Statistiques** - Statistiques du cache Unbound
+5. **Quitter**
+
+## ⚙️ Configuration Générée
+
+### Unbound
+
+- **Port** : `5335` (localhost uniquement)
+- **Threads** : Automatiquement ajusté selon vos cœurs CPU
+- **Cache** : Optimisé selon votre RAM disponible
+- **Sécurité** : DNS-over-TLS vers Cloudflare, DNSSEC activé
+
+### AdGuard Home
+
+- **Interface Web** : `http://<IP>:3000`
+- **DNS Upstream** : `127.0.0.1:5335` (Unbound local)
+
+## 🔧 Dépannage
+
+### Unbound ne démarre pas
+
+```bash
+sudo systemctl status unbound.service
+sudo journalctl -xeu unbound.service
+sudo unbound-checkconf
+```
+
+### Pas de résolution DNS
+
+```bash
+dig @127.0.0.1 -p 5335 google.com
+sudo unbound-control stats_noreset
+```
+
+### Voir les logs en temps réel
+
+```bash
+sudo journalctl -u unbound -f
+sudo journalctl -u AdGuardHome -f
+```
+
+## 📜 Licence
+
+Ce projet est sous licence MIT. Voir le fichier [LICENSE](LICENSE) pour plus de détails.
+
+## 🙏 Crédits
+
+- Inspiré par [tteck's Proxmox VE Helper-Scripts](https://github.com/community-scripts/ProxmoxVE)
+- [AdGuard Home](https://adguard.com/adguard-home/overview.html)
+- [NLnet Labs Unbound](https://nlnetlabs.nl/projects/unbound/about/)
+
+## ⚠️ Disclaimer
 
 Ce script modifie la configuration système. Utilisez-le à vos propres risques. Il est recommandé de faire des sauvegardes avant toute modification majeure.
-
