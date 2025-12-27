@@ -38,6 +38,7 @@ SELECTED_UPSTREAM="$DNS_UPSTREAM_CLOUDFLARE"
 AGH_ALREADY_INSTALLED=false
 UNBOUND_ALREADY_INSTALLED=false
 PRESERVE_NETWORK_CONFIG=false
+INTERACTIVE=true
 
 # Codes couleur ANSI
 YW=$(echo "\033[33m")
@@ -246,8 +247,28 @@ get_system_resources() {
     RAM_MB=$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo)
 }
 
+ask_manual_resources() {
+    [[ "$INTERACTIVE" != "true" ]] && return 0
+    if whiptail --title "Methode de configuration" --yesno "Les ressources detectees sont : ${CPU_CORES} CPU et ${RAM_MB} MB RAM.\nVoulez-vous utiliser la detection automatique ?" 10 70; then
+        return 0
+    else
+        CPU_CORES=$(whiptail --title "Configuration Manuelle" --inputbox "Entrez le nombre de coeurs CPU :" 10 60 "$CPU_CORES" 3>&1 1>&2 2>&3) || CPU_CORES=$(nproc --all)
+        RAM_MB=$(whiptail --title "Configuration Manuelle" --inputbox "Entrez la quantite de RAM (en MB) :" 10 60 "$RAM_MB" 3>&1 1>&2 2>&3) || RAM_MB=$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo)
+        
+        # Validation (evite les erreurs de calcul si l'utilisateur entre n'importe quoi)
+        if [[ ! "$CPU_CORES" =~ ^[0-9]+$ || "$CPU_CORES" -eq 0 ]]; then
+            CPU_CORES=$(nproc --all)
+        fi
+        if [[ ! "$RAM_MB" =~ ^[0-9]+$ || "$RAM_MB" -eq 0 ]]; then
+            RAM_MB=$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo)
+        fi
+        return 0
+    fi
+}
+
 calculate_optimized_settings() {
     get_system_resources
+    ask_manual_resources
 
     # Calcul du nombre de threads
     NUM_THREADS=$CPU_CORES
@@ -314,8 +335,8 @@ calculate_optimized_settings() {
         NEG_CACHE_SIZE="8m"
     fi
 
-    # Afficher un résumé des ressources détectées
-    msg_info "Ressources détectées: ${CPU_CORES} CPU, ${RAM_MB} MB RAM"
+    # Afficher un résumé des ressources appliquées
+    msg_info "Configuration appliquee: ${CPU_CORES} CPU, ${RAM_MB} MB RAM"
 }
 
 
@@ -1057,12 +1078,15 @@ main() {
     
     case "${1:-}" in
         --install)
+            INTERACTIVE=false
             full_install
             ;;
         --update)
+            INTERACTIVE=false
             update_all
             ;;
         --unbound-only)
+            INTERACTIVE=false
             install_unbound
             ;;
         --help|-h)
