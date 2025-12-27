@@ -12,6 +12,14 @@
 
 set -Eeuo pipefail
 
+# Version du script
+SCRIPT_VERSION="2.0.0"
+
+# Logging
+LOG_FILE="/var/log/adguard-unbound-installer.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+echo "=== $(date) - Script v${SCRIPT_VERSION} ===" >> "$LOG_FILE"
+
 # --- Couleurs & Variables Globales ---
 APP="AdGuard Home & Unbound"
 UNBOUND_PORT=5335
@@ -339,10 +347,35 @@ install_adguard_home() {
     esac
 
     AGH_URL="https://github.com/AdguardTeam/AdGuardHome/releases/download/${LATEST_VERSION}/AdGuardHome_linux_${AGH_ARCH}.tar.gz"
+    AGH_CHECKSUM_URL="${AGH_URL}.sha256"
     
     mkdir -p /tmp/agh_install
     cd /tmp/agh_install
+    
+    msg_info "Téléchargement du binaire et du checksum"
     wget -q "$AGH_URL" -O AdGuardHome.tar.gz
+    wget -q "$AGH_CHECKSUM_URL" -O AdGuardHome.tar.gz.sha256 2>/dev/null || true
+    
+    # Vérification du checksum SHA256 si disponible
+    if [[ -f "AdGuardHome.tar.gz.sha256" ]]; then
+        msg_info "Vérification de l'intégrité (SHA256)"
+        # Le fichier sha256 contient: "checksum  filename"
+        EXPECTED_CHECKSUM=$(cat AdGuardHome.tar.gz.sha256 | awk '{print $1}')
+        ACTUAL_CHECKSUM=$(sha256sum AdGuardHome.tar.gz | awk '{print $1}')
+        
+        if [[ "$EXPECTED_CHECKSUM" == "$ACTUAL_CHECKSUM" ]]; then
+            msg_ok "Checksum SHA256 vérifié"
+        else
+            msg_error "Checksum invalide! Téléchargement corrompu."
+            msg_error "Attendu: $EXPECTED_CHECKSUM"
+            msg_error "Obtenu:  $ACTUAL_CHECKSUM"
+            rm -rf /tmp/agh_install
+            exit 1
+        fi
+    else
+        msg_warn "Fichier checksum non disponible - vérification ignorée"
+    fi
+    
     tar -xzf AdGuardHome.tar.gz
     
     mkdir -p "$AGH_INSTALL_DIR"
@@ -350,7 +383,7 @@ install_adguard_home() {
     chmod +x "$AGH_BINARY"
     
     rm -rf /tmp/agh_install
-    msg_ok "AdGuard Home ${LATEST_VERSION} téléchargé"
+    msg_ok "AdGuard Home ${LATEST_VERSION} téléchargé et vérifié"
 
     msg_info "Création du service systemd pour AdGuard Home"
     cat <<EOF >/etc/systemd/system/${AGH_SERVICE}.service
@@ -696,6 +729,32 @@ update_adguard_home() {
     esac
 
     AGH_URL="https://github.com/AdguardTeam/AdGuardHome/releases/download/${LATEST_VERSION}/AdGuardHome_linux_${AGH_ARCH}.tar.gz"
+    AGH_CHECKSUM_URL="${AGH_URL}.sha256"
+    
+    # Télécharger et vérifier
+    mkdir -p /tmp/agh_update
+    cd /tmp/agh_update
+    
+    msg_info "Téléchargement de la mise à jour"
+    wget -q "$AGH_URL" -O AdGuardHome.tar.gz
+    wget -q "$AGH_CHECKSUM_URL" -O AdGuardHome.tar.gz.sha256 2>/dev/null || true
+    
+    # Vérification du checksum SHA256 si disponible
+    if [[ -f "AdGuardHome.tar.gz.sha256" ]]; then
+        msg_info "Vérification de l'intégrité (SHA256)"
+        EXPECTED_CHECKSUM=$(cat AdGuardHome.tar.gz.sha256 | awk '{print $1}')
+        ACTUAL_CHECKSUM=$(sha256sum AdGuardHome.tar.gz | awk '{print $1}')
+        
+        if [[ "$EXPECTED_CHECKSUM" == "$ACTUAL_CHECKSUM" ]]; then
+            msg_ok "Checksum SHA256 vérifié"
+        else
+            msg_error "Checksum invalide! Mise à jour annulée."
+            rm -rf /tmp/agh_update
+            return 1
+        fi
+    else
+        msg_warn "Fichier checksum non disponible - vérification ignorée"
+    fi
     
     # Arrêter le service
     systemctl stop "${AGH_SERVICE}"
@@ -703,10 +762,7 @@ update_adguard_home() {
     # Backup du binaire actuel
     cp "$AGH_BINARY" "${AGH_BINARY}.backup"
     
-    # Télécharger et installer
-    mkdir -p /tmp/agh_update
-    cd /tmp/agh_update
-    wget -q "$AGH_URL" -O AdGuardHome.tar.gz
+    # Installer la mise à jour
     tar -xzf AdGuardHome.tar.gz
     mv AdGuardHome/AdGuardHome "$AGH_BINARY"
     chmod +x "$AGH_BINARY"
