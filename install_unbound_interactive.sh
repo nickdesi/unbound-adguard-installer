@@ -778,11 +778,11 @@ show_menu() {
     header_info
     
     CHOICE=$(whiptail --title "AdGuard Home & Unbound Manager" --menu \
-        "Choisissez une option:" 18 70 5 \
+        "Choisissez une option:" 20 90 5 \
         "1" "Installation Complète (AdGuard Home + Unbound)" \
-        "2" "Mise à jour Complète" \
+        "2" "Mise à jour Complète (AdGuard Home + Unbound)" \
         "3" "Installer uniquement Unbound" \
-        "4" "Afficher les Statistiques" \
+        "4" "Afficher les Statistiques Unbound" \
         "5" "Quitter" \
         3>&1 1>&2 2>&3)
     
