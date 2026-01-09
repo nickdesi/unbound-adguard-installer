@@ -546,10 +546,10 @@ select_upstream() {
 show_menu() {
     local choice
     while true; do
-        choice=$(whiptail --title "Menu Principal" --menu "AdGuard Home & Unbound Optimizer" 20 70 6 \
-            "1" "Installation Complète" \
+        choice=$(whiptail --title "Menu Principal" --menu "AdGuard Home & Unbound Optimizer" 22 95 6 \
+            "1" "Installation Complète (Safe)" \
             "2" "Optimiser / Réparer Config Unbound" \
-            "3" "Mettre à jour (App + OS)" \
+            "3" "Mettre à jour système" \
             "4" "Stats Unbound" \
             "5" "Désinstaller Tout" \
             "6" "Quitter" \
