@@ -16,8 +16,9 @@ set -Eeuo pipefail
 trap cleanup EXIT
 trap 'error_handler $? $LINENO $BASH_COMMAND' ERR
 
-# --- Global# Version: 3.1.1 (Hotfix: Unbound Control)
-readonly SCRIPT_VERSION="3.1.1"
+# --- Global# IMPERATIVE: Stability Release
+# Version: 3.2.0 (Stable & Self-Updating)
+readonly SCRIPT_VERSION="3.2.0"
 readonly LOG_FILE="/var/log/adguard-unbound-installer.log"
 
 # App
@@ -390,6 +391,11 @@ EOF
         msg_info "Génération des clés de contrôle Unbound"
         unbound-control-setup &>/dev/null || true
     fi
+    
+    # Fix Permissions (Critical for functionality)
+    chown -R unbound:unbound /etc/unbound
+    chmod 755 /etc/unbound
+    chmod 640 /etc/unbound/unbound_control.*
 
     # Check & Start
     if unbound-checkconf &>/dev/null; then
@@ -558,16 +564,34 @@ select_upstream() {
     esac
 }
 
+update_script() {
+    msg_info "Vérification de la mise à jour du script..."
+    local remote_url="https://raw.githubusercontent.com/nickdesi/unbound-adguard-installer/main/install_unbound_interactive.sh"
+    local local_file="$0"
+    
+    # Download content specifically to check version/diff (simple overwrite for now is safer to avoid complexity)
+    if curl -fsSL "$remote_url" -o "${local_file}.tmp"; then
+        chmod +x "${local_file}.tmp"
+        mv "${local_file}.tmp" "$local_file"
+        msg_ok "Script mis à jour ! Relancez-le."
+        exit 0
+    else
+        msg_error "Échec du téléchargement de la mise à jour."
+        rm -f "${local_file}.tmp"
+    fi
+}
+
 show_menu() {
     local choice
     while true; do
-        choice=$(whiptail --title "Menu Principal" --menu "AdGuard Home & Unbound Optimizer" 22 95 6 \
-            "1" "Installation Complète (Safe)" \
+        choice=$(whiptail --title "Menu Principal (v${SCRIPT_VERSION})" --menu "AdGuard Home & Unbound Optimizer" 22 95 7 \
+            "1" "Installation Complète (Safe & Idempotent)" \
             "2" "Optimiser / Réparer Config Unbound" \
-            "3" "Mettre à jour système" \
-            "4" "Stats Unbound" \
-            "5" "Désinstaller Tout" \
-            "6" "Quitter" \
+            "3" "Mettre à jour OS & Paquets" \
+            "4" "Mettre à jour ce Script" \
+            "5" "Stats Unbound" \
+            "6" "Désinstaller Tout" \
+            "7" "Quitter" \
             3>&1 1>&2 2>&3) || exit 0
 
         case $choice in
@@ -587,19 +611,21 @@ show_menu() {
                 msg_info "Mise à jour OS..."
                 apt-get update && apt-get upgrade -y
                 msg_ok "OS à jour"
-                # Add AGH update logic if needed
                 ;;
             4)
+                update_script
+                ;;
+            5)
                 if command -v unbound-control &>/dev/null; then
                     unbound-control stats_noreset | head -n 20 | whiptail --title "Stats" --scrolltext --textbox /dev/stdin 20 80
                 else
                     msg_error "unbound-control non trouvé"
                 fi
                 ;;
-            5)
+            6)
                 uninstall_all
                 ;;
-            6)
+            7)
                 exit 0
                 ;;
         esac
