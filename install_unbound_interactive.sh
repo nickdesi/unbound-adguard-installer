@@ -17,8 +17,8 @@ trap cleanup EXIT
 trap 'error_handler $? $LINENO $BASH_COMMAND' ERR
 
 # --- Global# IMPERATIVE: Stability Release
-# Version: 3.2.1 (Hotfix: UI Cancel Handling)
-readonly SCRIPT_VERSION="3.2.1"
+# Version: 3.2.2 (UI Fix & Cache Bust)
+readonly SCRIPT_VERSION="3.2.2"
 readonly LOG_FILE="/var/log/adguard-unbound-installer.log"
 
 # App
@@ -597,11 +597,11 @@ show_menu() {
     local choice
     while true; do
         choice=$(whiptail --title "Menu Principal (v${SCRIPT_VERSION})" --menu "AdGuard Home & Unbound Optimizer" 22 95 7 \
-            "1" "Installation Complète (Safe & Idempotent)" \
-            "2" "Optimiser / Réparer Config Unbound" \
-            "3" "Mettre à jour OS & Paquets" \
-            "4" "Mettre à jour ce Script" \
-            "5" "Stats Unbound" \
+            "1" "Installation Complète" \
+            "2" "Réparer Config Unbound" \
+            "3" "Mise à jour Système (OS)" \
+            "4" "Mise à jour du Script" \
+            "5" "Voir Stats Unbound" \
             "6" "Désinstaller Tout" \
             "7" "Quitter" \
             3>&1 1>&2 2>&3) || exit 0
