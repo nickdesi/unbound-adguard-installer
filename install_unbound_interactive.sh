@@ -17,8 +17,8 @@ trap cleanup EXIT
 trap 'error_handler $? $LINENO $BASH_COMMAND' ERR
 
 # --- Global# IMPERATIVE: Stability Release
-# Version: 3.2.3 (Ultra-Short Menu Labels)
-readonly SCRIPT_VERSION="3.2.3"
+# Version: 3.2.4 (Stats Display Fix)
+readonly SCRIPT_VERSION="3.2.4"
 readonly LOG_FILE="/var/log/adguard-unbound-installer.log"
 
 # App
@@ -629,9 +629,19 @@ show_menu() {
                 ;;
             5)
                 if command -v unbound-control &>/dev/null; then
-                    unbound-control stats_noreset | head -n 20 | whiptail --title "Stats" --scrolltext --textbox /dev/stdin 20 80
+                    local stats_file=$(mktemp)
+                    if unbound-control stats_noreset > "$stats_file" 2>&1; then
+                        if [[ -s "$stats_file" ]]; then
+                            whiptail --title "Stats Unbound" --scrolltext --textbox "$stats_file" 20 70
+                        else
+                            whiptail --msgbox "Pas de stats disponibles.\nUnbound vient peut-etre de demarrer." 10 50
+                        fi
+                    else
+                        whiptail --msgbox "Erreur unbound-control:\n$(cat $stats_file)" 12 60
+                    fi
+                    rm -f "$stats_file"
                 else
-                    msg_error "unbound-control non trouvé"
+                    msg_error "unbound-control non trouve"
                 fi
                 ;;
             6)
