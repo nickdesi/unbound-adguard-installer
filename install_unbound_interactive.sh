@@ -17,8 +17,8 @@ trap cleanup EXIT
 trap 'error_handler $? $LINENO $BASH_COMMAND' ERR
 
 # --- Global# IMPERATIVE: Stability Release
-# Version: 3.2.0 (Stable & Self-Updating)
-readonly SCRIPT_VERSION="3.2.0"
+# Version: 3.2.1 (Hotfix: UI Cancel Handling)
+readonly SCRIPT_VERSION="3.2.1"
 readonly LOG_FILE="/var/log/adguard-unbound-installer.log"
 
 # App
@@ -220,8 +220,20 @@ calculate_optimized_settings() {
     # Allow manual override in interactive mode
     if [[ "$INTERACTIVE" == "true" ]]; then
         if ! whiptail --title "Ressources Système" --yesno "Détecté : ${CPU_CORES} CPU, ${RAM_MB} MB RAM.\n\nUtiliser ces valeurs pour l'auto-configuration ?" 10 60; then
-             CPU_CORES=$(whiptail --inputbox "Nombre de coeurs CPU :" 8 40 "$CPU_CORES" 3>&1 1>&2 2>&3)
-             RAM_MB=$(whiptail --inputbox "RAM en MB :" 8 40 "$RAM_MB" 3>&1 1>&2 2>&3)
+             # Manual Input with Cancel handling
+             local user_cpu
+             if user_cpu=$(whiptail --inputbox "Nombre de coeurs CPU :" 8 40 "$CPU_CORES" 3>&1 1>&2 2>&3); then
+                 CPU_CORES=$user_cpu
+             else
+                 msg_warn "Saisie annulée. Utilisation de la valeur détectée ($CPU_CORES)."
+             fi
+             
+             local user_ram
+             if user_ram=$(whiptail --inputbox "RAM en MB :" 8 40 "$RAM_MB" 3>&1 1>&2 2>&3); then
+                 RAM_MB=$user_ram
+             else
+                 msg_warn "Saisie annulée. Utilisation de la valeur détectée ($RAM_MB)."
+             fi
         fi
     fi
 
