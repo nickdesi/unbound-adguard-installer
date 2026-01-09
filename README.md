@@ -43,6 +43,7 @@ Le script analyse vos cœurs CPU et votre RAM pour calibrer Unbound scientifique
   - **Réparer / Optimiser** : Recalcule la config Unbound sans réinstaller.
   - **Désinstaller** : Suppression propre et complète.
   - **Stats** : Vue en temps réel de l'efficacité du cache.
+- **Auto-Update (v3.2.0)** : Le script peut se mettre à jour tout seul.
 
 ## 🚀 Installation Rapide
 
@@ -73,14 +74,15 @@ Options:
 Sans option, le script affiche un menu interactif.
 ```
 
-## 🎛️ Menu Interactif (v3.1.0)
+## 🎛️ Menu Interactif (v3.2.0)
 
-1. **Installation Complete** : Déploiement total AdGuard Home + Unbound.
-2. **Optimiser / Réparer Config** : Recalibre Unbound sur une installation existante (idéal si vous changez les ressources du LXC).
-3. **Mettre à jour** : Apps + OS.
-4. **Stats Unbound** : Consultez l'efficacité de votre cache.
-5. **Désinstaller Tout** : Suppression complète.
-6. **Quitter**
+1. **Installation Complète (Safe & Idempotent)** : Déploiement total AdGuard Home + Unbound.
+2. **Optimiser / Réparer Config Unbound** : Recalibre Unbound sur une installation existante (idéal si vous changez les ressources du LXC).
+3. **Mettre à jour OS & Paquets** : Debian/Ubuntu upgrade.
+4. **Mettre à jour ce Script** : Récupère la dernière version depuis GitHub.
+5. **Stats Unbound** : Consultez l'efficacité de votre cache.
+6. **Désinstaller Tout** : Suppression complète.
+7. **Quitter**
 
 ## ⚙️ Configuration par défaut
 
