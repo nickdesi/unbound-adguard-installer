@@ -16,8 +16,8 @@ set -Eeuo pipefail
 trap cleanup EXIT
 trap 'error_handler $? $LINENO $BASH_COMMAND' ERR
 
-# --- Global Constants ---
-readonly SCRIPT_VERSION="3.1.0"
+# --- Global# Version: 3.1.1 (Hotfix: Unbound Control)
+readonly SCRIPT_VERSION="3.1.1"
 readonly LOG_FILE="/var/log/adguard-unbound-installer.log"
 
 # App
@@ -371,10 +371,25 @@ forward-zone:
     name: "."
     forward-tls-upstream: yes
     $(get_upstream_forward_lines)
+
+remote-control:
+    control-enable: yes
+    control-interface: 127.0.0.1
+    control-port: 8953
+    server-key-file: "/etc/unbound/unbound_server.key"
+    server-cert-file: "/etc/unbound/unbound_server.pem"
+    control-key-file: "/etc/unbound/unbound_control.key"
+    control-cert-file: "/etc/unbound/unbound_control.pem"
 EOF
 
     # Root Hints
     wget -q -O /usr/share/dns/root.hints https://www.internic.net/domain/named.cache 2>/dev/null || true
+
+    # Setup Control Keys
+    if [[ ! -f "/etc/unbound/unbound_server.key" ]]; then
+        msg_info "Génération des clés de contrôle Unbound"
+        unbound-control-setup &>/dev/null || true
+    fi
 
     # Check & Start
     if unbound-checkconf &>/dev/null; then
