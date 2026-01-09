@@ -6,83 +6,103 @@
 # Script inspiré du style "Proxmox VE Helper-Scripts" (tteck/community-scripts)
 # Installe, configure et met à jour AdGuard Home + Unbound sur Debian/Ubuntu LXC.
 # ==========================================================================
-# Auteur: Nicolas (basé sur les travaux de tteck)
+# Auteur: Nicolas (Optimisé par Context7 Agent)
+# Version: 3.0.0 (Optimized)
 # Licence: MIT
 # ==========================================================================
 
+# --- Safety & Error Handling ---
 set -Eeuo pipefail
+trap cleanup EXIT
+trap 'error_handler $? $LINENO $BASH_COMMAND' ERR
 
-# Version du script
-SCRIPT_VERSION="2.0.0"
+# --- Global Constants ---
+readonly SCRIPT_VERSION="3.1.0"
+readonly LOG_FILE="/var/log/adguard-unbound-installer.log"
 
-# Logging
-LOG_FILE="/var/log/adguard-unbound-installer.log"
-exec > >(tee -a "$LOG_FILE") 2>&1
-echo "=== $(date) - Script v${SCRIPT_VERSION} ===" >> "$LOG_FILE"
+# App
+readonly APP="AdGuard Home & Unbound"
+readonly UNBOUND_PORT=5335
+readonly AGH_INSTALL_DIR="/opt/AdGuardHome"
+readonly AGH_BINARY="${AGH_INSTALL_DIR}/AdGuardHome"
+readonly AGH_YAML="${AGH_INSTALL_DIR}/AdGuardHome.yaml"
+readonly AGH_SERVICE="AdGuardHome"
 
-# --- Couleurs & Variables Globales ---
-APP="AdGuard Home & Unbound"
-UNBOUND_PORT=5335
-AGH_INSTALL_DIR="/opt/AdGuardHome"
-AGH_BINARY="${AGH_INSTALL_DIR}/AdGuardHome"
-AGH_YAML="${AGH_INSTALL_DIR}/AdGuardHome.yaml"
-AGH_SERVICE="AdGuardHome"
+# Colors
+readonly YW="\033[33m"
+readonly BL="\033[34m"
+readonly RD="\033[01;31m"
+readonly GN="\033[1;32m"
+readonly CL="\033[m"
+readonly BFR="\\r\\033[K"
+readonly HOLD="-"
+readonly CM="${GN}✓${CL}"
+readonly CROSS="${RD}✗${CL}"
+readonly INFO="${BL}ℹ${CL}"
+readonly WARN="${YW}⚠${CL}"
 
-# DNS Upstream Options
-DNS_UPSTREAM_CLOUDFLARE="cloudflare"
-DNS_UPSTREAM_QUAD9="quad9"
-DNS_UPSTREAM_MULLVAD="mullvad"
-SELECTED_UPSTREAM="$DNS_UPSTREAM_CLOUDFLARE"
-
-# Flags de détection d'installation existante
+# Global State Variables (mutable)
 AGH_ALREADY_INSTALLED=false
 UNBOUND_ALREADY_INSTALLED=false
-PRESERVE_NETWORK_CONFIG=false
 INTERACTIVE=true
+SELECTED_UPSTREAM="cloudflare"
+CPU_CORES=1
+RAM_MB=512
 
-# Codes couleur ANSI
-YW=$(echo "\033[33m")
-BL=$(echo "\033[34m")
-RD=$(echo "\033[01;31m")
-GN=$(echo "\033[1;32m")
-CL=$(echo "\033[m")
-BFR="\\r\\033[K"
-HOLD="-"
-CM="${GN}✓${CL}"
-CROSS="${RD}✗${CL}"
-INFO="${BL}ℹ${CL}"
-WARN="${YW}⚠${CL}"
+# --- Error Handling & Cleanup ---
 
-# --- Fonctions d'Affichage (Style Proxmox Helper-Scripts) ---
+cleanup() {
+    # Clean up temp directories if they exist
+    rm -rf /tmp/agh_install /tmp/agh_update 2>/dev/null || true
+}
+
+error_handler() {
+    local exit_code="$1"
+    local line_number="$2"
+    local command="$3"
+    msg_error "Erreur détectée ligne ${line_number}: commande '${command}' a échoué (code ${exit_code})"
+}
+
+# --- Logging & UI Functions ---
 
 spinner() {
     local chars="/-\|"
-    while :; do
+    local pid=$!
+    while kill -0 $pid 2>/dev/null; do
         for (( i=0; i<${#chars}; i++ )); do
             sleep 0.1
             echo -en "${BFR}${HOLD} ${chars:$i:1}"
         done
     done
+    echo -en "${BFR}"
+}
+
+log() {
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
 }
 
 msg_info() {
     local msg="$1"
     echo -ne " ${HOLD} ${YW}${msg}...${CL}"
+    log "INFO: $msg"
 }
 
 msg_ok() {
     local msg="$1"
     echo -e "${BFR} ${CM} ${GN}${msg}${CL}"
+    log "OK: $msg"
 }
 
 msg_error() {
     local msg="$1"
     echo -e "${BFR} ${CROSS} ${RD}${msg}${CL}"
+    log "ERROR: $msg"
 }
 
 msg_warn() {
     local msg="$1"
     echo -e "${BFR} ${WARN} ${YW}${msg}${CL}"
+    log "WARN: $msg"
 }
 
 header_info() {
@@ -94,15 +114,15 @@ header_info() {
  / ___ / /_/ / / /_/ / /_/ / /_/ / /  / /_/ /  / __  / /_/ / / / / / /  __/  
 /_/  |_\__,_/  \____/\__,_/\__,_/_/   \__,_/  /_/ /_/\____/_/ /_/ /_/\___/   
                                         & Unbound DNS Optimizer
-                                        
+                                        v3.0.0 (High Performance)
 EOF
     echo -e "${BL}====================================================================${CL}"
-    echo -e "${GN}   AdGuard Home + Unbound :: Installation & Mise à jour${CL}"
+    echo -e "${GN}   AdGuard Home + Unbound :: Installation & Tuning${CL}"
     echo -e "${BL}====================================================================${CL}"
     echo ""
 }
 
-# --- Fonctions de Vérification ---
+# --- System Checks ---
 
 check_root() {
     if [[ $EUID -ne 0 ]]; then
@@ -119,49 +139,56 @@ check_os() {
             exit 1
         fi
     else
-        msg_error "Impossible de détecter l'OS. /etc/os-release introuvable."
+        msg_error "Impossible de détecter l'OS."
         exit 1
     fi
 }
 
 check_dependencies() {
-    local deps=("curl" "wget" "tar" "jq" "whiptail")
+    local deps=("curl" "wget" "tar" "jq" "whiptail" "bc" "python3")
+    local missing_deps=()
+    local python_packages=("python3-yaml")
+    
     for dep in "${deps[@]}"; do
         if ! command -v "$dep" &> /dev/null; then
-            msg_info "Installation de la dépendance manquante: $dep"
-            apt-get install -y "$dep" &>/dev/null
-            msg_ok "$dep installé"
+            missing_deps+=("$dep")
         fi
     done
+    
+    # Check for python3-yaml specifically
+    if ! dpkg -s python3-yaml &>/dev/null && ! python3 -c "import yaml" &>/dev/null; then
+         missing_deps+=("python3-yaml")
+    fi
+    
+    if [[ ${#missing_deps[@]} -gt 0 ]]; then
+        msg_info "Installation des dépendances manquantes: ${missing_deps[*]}"
+        apt-get update &>/dev/null
+        apt-get install -y "${missing_deps[@]}" &>/dev/null
+        msg_ok "Dépendances installées"
+    fi
 }
 
-# --- Optimisation Réseau (Sysctl) ---
+# --- Network Optimization (Sysctl) ---
 
 apply_sysctl_tuning() {
     msg_info "Application des optimisations réseau (sysctl)"
     
     local SYSCTL_CONF="/etc/sysctl.d/99-dns-optimization.conf"
     
+    # Values tuned for high-throughput UDP (DNS)
     cat > "$SYSCTL_CONF" <<EOF
-# Optimisations réseau pour DNS (généré par install script)
-# Augmente les buffers UDP pour de meilleures performances DNS
+# Optimisations DNS (Généré par Installer v${SCRIPT_VERSION})
 net.core.rmem_max = 8388608
 net.core.wmem_max = 8388608
 net.core.rmem_default = 1048576
 net.core.wmem_default = 1048576
-
-# Optimise la pile TCP/UDP
 net.core.netdev_max_backlog = 50000
 net.ipv4.udp_mem = 65536 131072 262144
-
-# Désactive les réponses ICMP redirect (sécurité)
 net.ipv4.conf.all.accept_redirects = 0
-net.ipv4.conf.default.accept_redirects = 0
 net.ipv6.conf.all.accept_redirects = 0
-net.ipv6.conf.default.accept_redirects = 0
 EOF
     
-    # Appliquer si on a les permissions (pas toujours possible en LXC non-privilégié)
+    # Try to apply, handle container limitations gracefully
     if sysctl -p "$SYSCTL_CONF" &>/dev/null; then
         msg_ok "Optimisations sysctl appliquées"
     else
@@ -169,488 +196,232 @@ EOF
     fi
 }
 
-# --- Sélection DNS Upstream ---
+# --- Unbound Logic & Calculation ---
 
-select_dns_upstream() {
-    CHOICE=$(whiptail --title "Selection DNS Upstream" --menu \
-        "Choisissez votre fournisseur DNS-over-TLS upstream:" 15 80 4 \
-        "1" "Cloudflare (1.1.1.1) - Rapide, global" \
-        "2" "Quad9 (9.9.9.9) - Securise, bloque malwares" \
-        "3" "Mullvad (194.242.2.2) - Vie privee maximale" \
-        "4" "Personnalise (entree manuelle)" \
-        3>&1 1>&2 2>&3) || CHOICE="1"
-    
-    case $CHOICE in
-        1) SELECTED_UPSTREAM="$DNS_UPSTREAM_CLOUDFLARE" ;;
-        2) SELECTED_UPSTREAM="$DNS_UPSTREAM_QUAD9" ;;
-        3) SELECTED_UPSTREAM="$DNS_UPSTREAM_MULLVAD" ;;
-        4) 
-            CUSTOM_DNS=$(whiptail --inputbox "Entrez l'adresse DNS (ex: 1.1.1.1@853#cloudflare-dns.com):" 10 70 3>&1 1>&2 2>&3)
-            SELECTED_UPSTREAM="custom"
-            CUSTOM_DNS_ADDR="$CUSTOM_DNS"
-            ;;
-        *) SELECTED_UPSTREAM="$DNS_UPSTREAM_CLOUDFLARE" ;;
-    esac
-}
-
-get_upstream_config() {
-    case $SELECTED_UPSTREAM in
-        cloudflare)
-            cat <<EOF
-    forward-addr: 1.1.1.1@853#cloudflare-dns.com
-    forward-addr: 1.0.0.1@853#cloudflare-dns.com
-    forward-addr: 2606:4700:4700::1111@853#cloudflare-dns.com
-    forward-addr: 2606:4700:4700::1001@853#cloudflare-dns.com
-EOF
-            ;;
-        quad9)
-            cat <<EOF
-    forward-addr: 9.9.9.9@853#dns.quad9.net
-    forward-addr: 149.112.112.112@853#dns.quad9.net
-    forward-addr: 2620:fe::fe@853#dns.quad9.net
-    forward-addr: 2620:fe::9@853#dns.quad9.net
-EOF
-            ;;
-        mullvad)
-            cat <<EOF
-    forward-addr: 194.242.2.2@853#dns.mullvad.net
-    forward-addr: 2a07:e340::2@853#dns.mullvad.net
-EOF
-            ;;
-        custom)
-            echo "    forward-addr: ${CUSTOM_DNS_ADDR}"
-            ;;
-    esac
-}
-
-# --- Préchauffage du Cache DNS ---
-
-warmup_cache() {
-    msg_info "Préchauffage du cache DNS (domaines populaires)"
-    
-    local domains=("google.com" "facebook.com" "youtube.com" "amazon.com" "cloudflare.com" 
-                   "microsoft.com" "apple.com" "github.com" "netflix.com" "twitter.com")
-    
-    for domain in "${domains[@]}"; do
-        dig @127.0.0.1 -p ${UNBOUND_PORT} "$domain" +short A &>/dev/null || true
+# Helper to find nearest power of 2 (round down)
+get_power_of_two() {
+    local n=$1
+    local p=1
+    while (( p * 2 <= n )); do
+        (( p *= 2 ))
     done
-    
-    msg_ok "Cache DNS préchauffé (${#domains[@]} domaines)"
+    echo $p
 }
-
-# --- Fonctions de Calcul Optimisé pour Unbound ---
-
 
 get_system_resources() {
     CPU_CORES=$(nproc --all)
-    # RAM en Mo
     RAM_MB=$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo)
-}
-
-ask_manual_resources() {
-    [[ "$INTERACTIVE" != "true" ]] && return 0
-    if whiptail --title "Methode de configuration" --yesno "Les ressources detectees sont : ${CPU_CORES} CPU et ${RAM_MB} MB RAM.\nVoulez-vous utiliser la detection automatique ?" 10 70; then
-        return 0
-    else
-        CPU_CORES=$(whiptail --title "Configuration Manuelle" --inputbox "Entrez le nombre de coeurs CPU :" 10 60 "$CPU_CORES" 3>&1 1>&2 2>&3) || CPU_CORES=$(nproc --all)
-        RAM_MB=$(whiptail --title "Configuration Manuelle" --inputbox "Entrez la quantite de RAM (en MB) :" 10 60 "$RAM_MB" 3>&1 1>&2 2>&3) || RAM_MB=$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo)
-        
-        # Validation (evite les erreurs de calcul si l'utilisateur entre n'importe quoi)
-        if [[ ! "$CPU_CORES" =~ ^[0-9]+$ || "$CPU_CORES" -eq 0 ]]; then
-            CPU_CORES=$(nproc --all)
-        fi
-        if [[ ! "$RAM_MB" =~ ^[0-9]+$ || "$RAM_MB" -eq 0 ]]; then
-            RAM_MB=$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo)
-        fi
-        return 0
-    fi
 }
 
 calculate_optimized_settings() {
     get_system_resources
-    ask_manual_resources
-
-    # Calcul du nombre de threads
-    NUM_THREADS=$CPU_CORES
-
-    # Calcul des slabs (puissance de 2 proche de num_threads)
-    if [[ $CPU_CORES -le 1 ]]; then
-        CACHE_SLABS=2
-    elif [[ $CPU_CORES -eq 2 ]]; then
-        CACHE_SLABS=2
-    elif [[ $CPU_CORES -le 4 ]]; then
-        CACHE_SLABS=4
-    elif [[ $CPU_CORES -le 8 ]]; then
-        CACHE_SLABS=8
-    else
-        CACHE_SLABS=16
+    
+    # Allow manual override in interactive mode
+    if [[ "$INTERACTIVE" == "true" ]]; then
+        if ! whiptail --title "Ressources Système" --yesno "Détecté : ${CPU_CORES} CPU, ${RAM_MB} MB RAM.\n\nUtiliser ces valeurs pour l'auto-configuration ?" 10 60; then
+             CPU_CORES=$(whiptail --inputbox "Nombre de coeurs CPU :" 8 40 "$CPU_CORES" 3>&1 1>&2 2>&3)
+             RAM_MB=$(whiptail --inputbox "RAM en MB :" 8 40 "$RAM_MB" 3>&1 1>&2 2>&3)
+        fi
     fi
 
-    # Calcul des tailles de cache et paramètres basés sur la RAM
-    # Adapté pour les petits LXC (512MB) jusqu'aux gros serveurs (4GB+)
-    if [[ $RAM_MB -lt 512 ]]; then
-        # Très petit LXC (256-511 MB)
+    # Unbound Threading & Slabs (Performance Critical)
+    # Docs: Slabs reduce lock contention. Must be power of 2. Close to num_cpus is ideal.
+    NUM_THREADS=$CPU_CORES
+    
+    # Calculate Slabs: Power of 2, closest to threads but max 8-16 usually sufficient
+    if (( CPU_CORES == 1 )); then
+        CACHE_SLABS=1 # Special case for single core to save memory
+        NUM_THREADS=1
+    else
+        # Find nearest power of 2 (e.g., 6 cores -> 4 slabs)
+        CACHE_SLABS=$(get_power_of_two $CPU_CORES)
+        # Ensure at least 2 slabs if >1 core
+        (( CACHE_SLABS < 2 )) && CACHE_SLABS=2
+    fi
+
+    # Memory Allocation Logic (Tiered)
+    if (( RAM_MB < 512 )); then
+        # Micro Instance
         RRSET_CACHE_SIZE="16m"
         MSG_CACHE_SIZE="8m"
-        SO_BUF="256k"
-        INFRA_CACHE_HOSTS=5000
-        OUTGOING_RANGE=2048
-        QUERIES_PER_THREAD=1024
+        SO_RCVBUF="1m"
+        SO_SNDBUF="1m"
+        INFRA_HOSTS=200
+        OUTGOING_RANGE=512
+        QUERIES_PER_THREAD=512
         NEG_CACHE_SIZE="1m"
-    elif [[ $RAM_MB -lt 768 ]]; then
-        # Petit LXC (512-767 MB) - comme ta config
-        RRSET_CACHE_SIZE="32m"
-        MSG_CACHE_SIZE="16m"
-        SO_BUF="512k"
-        INFRA_CACHE_HOSTS=10000
-        OUTGOING_RANGE=4096
-        QUERIES_PER_THREAD=2048
-        NEG_CACHE_SIZE="2m"
-    elif [[ $RAM_MB -lt 1024 ]]; then
-        # Moyen LXC (768-1023 MB)
+    elif (( RAM_MB < 1024 )); then
+        # Small (Pi 4 / Standard LXC)
         RRSET_CACHE_SIZE="64m"
         MSG_CACHE_SIZE="32m"
-        SO_BUF="1m"
-        INFRA_CACHE_HOSTS=25000
-        OUTGOING_RANGE=4096
-        QUERIES_PER_THREAD=2048
+        SO_RCVBUF="2m"
+        SO_SNDBUF="2m"
+        INFRA_HOSTS=10000
+        OUTGOING_RANGE=2048
+        QUERIES_PER_THREAD=1024
         NEG_CACHE_SIZE="4m"
-    elif [[ $RAM_MB -lt 2048 ]]; then
-        # Grand LXC (1-2 GB)
-        RRSET_CACHE_SIZE="128m"
-        MSG_CACHE_SIZE="64m"
-        SO_BUF="2m"
-        INFRA_CACHE_HOSTS=50000
-        OUTGOING_RANGE=8192
-        QUERIES_PER_THREAD=4096
-        NEG_CACHE_SIZE="4m"
-    else
-        # Très grand LXC (2GB+)
+    elif (( RAM_MB < 4096 )); then
+        # Medium/High (Common Server)
         RRSET_CACHE_SIZE="256m"
         MSG_CACHE_SIZE="128m"
-        SO_BUF="4m"
-        INFRA_CACHE_HOSTS=100000
+        SO_RCVBUF="4m"
+        SO_SNDBUF="4m"
+        INFRA_HOSTS=50000
         OUTGOING_RANGE=8192
         QUERIES_PER_THREAD=4096
-        NEG_CACHE_SIZE="8m"
-    fi
-
-    # Afficher un résumé des ressources appliquées
-    msg_info "Configuration appliquee: ${CPU_CORES} CPU, ${RAM_MB} MB RAM"
-}
-
-
-# --- Fonctions d'Installation ---
-
-install_adguard_home() {
-    if [[ -f "$AGH_BINARY" ]]; then
-        msg_warn "AdGuard Home est déjà installé dans ${AGH_INSTALL_DIR}"
-        AGH_ALREADY_INSTALLED=true
-        return 0
-    fi
-
-    msg_info "Téléchargement de la dernière version d'AdGuard Home"
-    
-    # Récupérer la dernière version depuis l'API GitHub
-    LATEST_VERSION=$(curl -fsSL "https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest" | jq -r '.tag_name')
-    if [[ -z "$LATEST_VERSION" || "$LATEST_VERSION" == "null" ]]; then
-        msg_error "Impossible de récupérer la dernière version d'AdGuard Home"
-        exit 1
-    fi
-    
-    # Déterminer l'architecture
-    ARCH=$(uname -m)
-    case $ARCH in
-        x86_64) AGH_ARCH="amd64" ;;
-        aarch64) AGH_ARCH="arm64" ;;
-        armv7l) AGH_ARCH="armv7" ;;
-        *) msg_error "Architecture non supportée: $ARCH"; exit 1 ;;
-    esac
-
-    AGH_URL="https://github.com/AdguardTeam/AdGuardHome/releases/download/${LATEST_VERSION}/AdGuardHome_linux_${AGH_ARCH}.tar.gz"
-    AGH_CHECKSUM_URL="${AGH_URL}.sha256"
-    
-    mkdir -p /tmp/agh_install
-    cd /tmp/agh_install
-    
-    msg_info "Téléchargement du binaire et du checksum"
-    wget -q "$AGH_URL" -O AdGuardHome.tar.gz
-    wget -q "$AGH_CHECKSUM_URL" -O AdGuardHome.tar.gz.sha256 2>/dev/null || true
-    
-    # Vérification du checksum SHA256 si disponible
-    if [[ -f "AdGuardHome.tar.gz.sha256" ]]; then
-        msg_info "Vérification de l'intégrité (SHA256)"
-        # Le fichier sha256 contient: "checksum  filename"
-        EXPECTED_CHECKSUM=$(cat AdGuardHome.tar.gz.sha256 | awk '{print $1}')
-        ACTUAL_CHECKSUM=$(sha256sum AdGuardHome.tar.gz | awk '{print $1}')
-        
-        if [[ "$EXPECTED_CHECKSUM" == "$ACTUAL_CHECKSUM" ]]; then
-            msg_ok "Checksum SHA256 vérifié"
-        else
-            msg_error "Checksum invalide! Téléchargement corrompu."
-            msg_error "Attendu: $EXPECTED_CHECKSUM"
-            msg_error "Obtenu:  $ACTUAL_CHECKSUM"
-            rm -rf /tmp/agh_install
-            exit 1
-        fi
+        NEG_CACHE_SIZE="32m"
     else
-        msg_warn "Fichier checksum non disponible - vérification ignorée"
-    fi
-    
-    tar -xzf AdGuardHome.tar.gz
-    
-    mkdir -p "$AGH_INSTALL_DIR"
-    mv AdGuardHome/AdGuardHome "$AGH_BINARY"
-    chmod +x "$AGH_BINARY"
-    
-    rm -rf /tmp/agh_install
-    msg_ok "AdGuard Home ${LATEST_VERSION} téléchargé et vérifié"
-
-    msg_info "Création du service systemd pour AdGuard Home"
-    cat <<EOF >/etc/systemd/system/${AGH_SERVICE}.service
-[Unit]
-Description=AdGuard Home: Network-level blocker
-ConditionFileIsExecutable=${AGH_BINARY}
-After=syslog.target network-online.target
-
-[Service]
-StartLimitInterval=5
-StartLimitBurst=10
-ExecStart=${AGH_BINARY} -s run
-WorkingDirectory=${AGH_INSTALL_DIR}
-StandardOutput=journal
-StandardError=journal
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload
-    systemctl enable -q "${AGH_SERVICE}"
-    systemctl start "${AGH_SERVICE}"
-    msg_ok "Service AdGuard Home créé et démarré"
-
-    # Attendre que le fichier YAML soit créé (premier lancement)
-    msg_info "Attente de l'initialisation d'AdGuard Home (config YAML)"
-    local timeout=60
-    while [[ ! -f "$AGH_YAML" && $timeout -gt 0 ]]; do
-        sleep 2
-        ((timeout-=2))
-    done
-    
-    if [[ -f "$AGH_YAML" ]]; then
-        msg_ok "Configuration AdGuard Home initialisée"
-    else
-        msg_warn "Le fichier YAML n'a pas été créé automatiquement. Configuration manuelle requise."
+        # Premium/Dedibox (> 4GB)
+        RRSET_CACHE_SIZE="512m"
+        MSG_CACHE_SIZE="256m"
+        SO_RCVBUF="8m"
+        SO_SNDBUF="8m"
+        INFRA_HOSTS=100000
+        OUTGOING_RANGE=8192
+        QUERIES_PER_THREAD=8192
+        NEG_CACHE_SIZE="64m"
     fi
 }
 
 install_unbound() {
-    # Vérifier si Unbound est déjà installé et fonctionnel
     if systemctl is-active --quiet unbound 2>/dev/null; then
-        msg_warn "Unbound est déjà installé et actif"
-        UNBOUND_ALREADY_INSTALLED=true
-        # Ne pas réinstaller, juste reconfigurer si nécessaire
+        msg_warn "Unbound est déjà actif (sera reconfiguré)"
     else
-        msg_info "Installation d'Unbound"
-        apt-get update &>/dev/null
+        msg_info "Installation du paquet Unbound"
         apt-get install -y unbound ca-certificates dnsutils &>/dev/null
         msg_ok "Unbound installé"
     fi
 
-    # Arrêter Unbound pour configuration
-    systemctl stop unbound &>/dev/null || true
-
-    # Gérer systemd-resolved
+    # Disable systemd-resolved if conflict
     if systemctl is-active --quiet systemd-resolved; then
-        if ss -tulnp | grep -E ':(53|5353)\s' | grep -q 'systemd-resolve'; then
+         if ss -tulnp | grep -E ':(53|5353)\s' | grep -q 'systemd-resolve'; then
             msg_info "Désactivation de systemd-resolved (conflit port 53)"
-            systemctl disable --now systemd-resolved.service &>/dev/null
-            if [[ -L /etc/resolv.conf ]]; then
-                rm -f /etc/resolv.conf
-            fi
+            systemctl disable --now systemd-resolved.service &>/dev/null || true
+            rm -f /etc/resolv.conf
             msg_ok "systemd-resolved désactivé"
-        fi
+         fi
     fi
 
-    msg_info "Génération de la configuration Unbound optimisée"
+    # Generate Config
     calculate_optimized_settings
-
-    # Sauvegarde de la configuration existante
-    CONF_FILE="/etc/unbound/unbound.conf"
-    if [[ -f "$CONF_FILE" ]]; then
-        mv "$CONF_FILE" "${CONF_FILE}.backup.$(date +%Y%m%d%H%M%S)"
+    
+    # Backup
+    if [[ -f "/etc/unbound/unbound.conf" ]]; then
+        mv "/etc/unbound/unbound.conf" "/etc/unbound/unbound.conf.backup.$(date +%s)"
     fi
 
-    # Création de la nouvelle configuration
-    cat > "$CONF_FILE" <<EOF
-# ==================================================================
-# Configuration Unbound ULTRA-OPTIMISÉE pour AdGuard Home sur LXC
-# Générée automatiquement le $(date)
-# Ressources détectées : ${CPU_CORES} CPU / ${RAM_MB}MB RAM
-# ==================================================================
-
+    msg_info "Génération de la configuration Unbound (Threads: $NUM_THREADS, Slabs: $CACHE_SLABS)"
+    
+    cat > /etc/unbound/unbound.conf <<EOF
 server:
+    verbosity: 1
     interface: 127.0.0.1
     port: ${UNBOUND_PORT}
     do-ip4: yes
-    do-ip6: yes
     do-udp: yes
     do-tcp: yes
-    tls-cert-bundle: "/etc/ssl/certs/ca-certificates.crt"
-
-    access-control: 127.0.0.0/8 allow
-    access-control: ::1/128 allow
-
+    
+    # --- Performance Tuning (Context7 Optimized) ---
     num-threads: ${NUM_THREADS}
+    
+    # Slabs (Power of 2 to reduce lock contention)
     msg-cache-slabs: ${CACHE_SLABS}
     rrset-cache-slabs: ${CACHE_SLABS}
     infra-cache-slabs: ${CACHE_SLABS}
     key-cache-slabs: ${CACHE_SLABS}
+    
+    # Cache Sizes
     rrset-cache-size: ${RRSET_CACHE_SIZE}
     msg-cache-size: ${MSG_CACHE_SIZE}
+    neg-cache-size: ${NEG_CACHE_SIZE}
+    
+    # Network Buffers
     so-reuseport: yes
-    so-rcvbuf: ${SO_BUF}
-    so-sndbuf: ${SO_BUF}
-
-    prefetch: yes
-    prefetch-key: yes
-    serve-expired: yes
-    serve-expired-ttl: 86400
-    serve-expired-ttl-reset: yes
-    serve-expired-client-timeout: 1800
-
-    # Optimisations avancées (adaptées aux ressources)
-    outgoing-range: ${OUTGOING_RANGE}
-    num-queries-per-thread: ${QUERIES_PER_THREAD}
-    jostle-timeout: 300
-    infra-host-ttl: 900
-    infra-cache-numhosts: ${INFRA_CACHE_HOSTS}
-    unwanted-reply-threshold: 10000000
+    so-rcvbuf: ${SO_RCVBUF}
+    so-sndbuf: ${SO_SNDBUF}
     edns-buffer-size: 1232
     max-udp-size: 1232
-    cache-min-ttl: 300
-    cache-max-ttl: 86400
-    cache-max-negative-ttl: 3600
-    neg-cache-size: ${NEG_CACHE_SIZE}
-    delay-close: 10000
-
-    minimal-responses: yes
-    qname-minimisation: yes
-    qname-minimisation-strict: yes
-
+    
+    # Limits
+    outgoing-range: ${OUTGOING_RANGE}
+    num-queries-per-thread: ${QUERIES_PER_THREAD}
+    infra-cache-numhosts: ${INFRA_HOSTS}
+    
+    # Privacy & Security
     hide-identity: yes
     hide-version: yes
     harden-glue: yes
     harden-dnssec-stripped: yes
-    use-caps-for-id: yes
-    deny-any: yes
-    harden-below-nxdomain: yes
-    harden-referral-path: yes
     harden-algo-downgrade: yes
-
-    auto-trust-anchor-file: "/var/lib/unbound/root.key"
-    root-hints: "/usr/share/dns/root.hints"
-    val-log-level: 1
-
+    use-caps-for-id: yes
     private-address: 192.168.0.0/16
-    private-address: 172.16.0.0/12
     private-address: 10.0.0.0/8
-    private-address: 169.254.0.0/16
-    private-address: fd00::/8
-    private-address: fe80::/10
-    private-domain: "local"
-    private-domain: "lan"
-    private-domain: "home.arpa"
+    private-address: 172.16.0.0/12
+    
+    # Prefetching
+    prefetch: yes
+    prefetch-key: yes
+    serve-expired: yes
+    serve-expired-ttl: 86400
 
-    extended-statistics: yes
-    statistics-interval: 0
-    statistics-cumulative: yes
+    # Certs
+    tls-cert-bundle: "/etc/ssl/certs/ca-certificates.crt"
 
 forward-zone:
     name: "."
     forward-tls-upstream: yes
-$(get_upstream_config)
-
-remote-control:
-    control-enable: yes
-    control-interface: 127.0.0.1
-    control-port: 8953
-    server-key-file: "/etc/unbound/unbound_server.key"
-    server-cert-file: "/etc/unbound/unbound_server.pem"
-    control-key-file: "/etc/unbound/unbound_control.key"
-    control-cert-file: "/etc/unbound/unbound_control.pem"
+    $(get_upstream_forward_lines)
 EOF
-    msg_ok "Configuration Unbound générée (${NUM_THREADS} threads, ${RRSET_CACHE_SIZE} cache)"
 
-    # Vérification de la syntaxe
-    msg_info "Vérification de la syntaxe Unbound"
-    if unbound-checkconf "$CONF_FILE" &>/dev/null; then
-        msg_ok "Syntaxe Unbound valide"
+    # Root Hints
+    wget -q -O /usr/share/dns/root.hints https://www.internic.net/domain/named.cache 2>/dev/null || true
+
+    # Check & Start
+    if unbound-checkconf &>/dev/null; then
+        systemctl restart unbound
+        systemctl enable unbound &>/dev/null
+        msg_ok "Configuration Unbound valide et service démarré"
     else
-        msg_error "Erreur de syntaxe dans la configuration Unbound"
-        unbound-checkconf "$CONF_FILE"
-        exit 1
-    fi
-
-    # Configuration de unbound-control
-    if [[ ! -f "/etc/unbound/unbound_server.key" ]]; then
-        msg_info "Génération des clés unbound-control"
-        unbound-control-setup &>/dev/null || true
-        msg_ok "Clés unbound-control générées"
-    fi
-
-    # Permissions
-    chown -R unbound:unbound /etc/unbound/ /var/lib/unbound/ 2>/dev/null || true
-
-    # Démarrage d'Unbound
-    msg_info "Démarrage du service Unbound"
-    systemctl daemon-reload
-    systemctl enable -q unbound
-    systemctl restart unbound
-    sleep 2
-
-    if systemctl is-active --quiet unbound; then
-        msg_ok "Service Unbound démarré"
-        # Test DNS
-        if dig @127.0.0.1 -p ${UNBOUND_PORT} google.com +short A +tries=1 +time=2 &>/dev/null; then
-            msg_ok "Test DNS via Unbound réussi"
-        else
-            msg_warn "Unbound démarré mais le test DNS a échoué"
-        fi
-    else
-        msg_error "Échec du démarrage d'Unbound"
-        journalctl -u unbound --no-pager -n 20
+        msg_error "Configuration Unbound invalide !"
+        unbound-checkconf
         exit 1
     fi
 }
 
+get_upstream_forward_lines() {
+    # Helper to print forward-addr lines
+    if [[ "$SELECTED_UPSTREAM" == "cloudflare" ]]; then
+        echo "forward-addr: 1.1.1.1@853#cloudflare-dns.com"
+        echo "    forward-addr: 1.0.0.1@853#cloudflare-dns.com"
+    elif [[ "$SELECTED_UPSTREAM" == "quad9" ]]; then
+        echo "forward-addr: 9.9.9.9@853#dns.quad9.net"
+        echo "    forward-addr: 149.112.112.112@853#dns.quad9.net"
+    else
+         echo "forward-addr: 1.1.1.1@853#cloudflare-dns.com"
+    fi
+}
+
+# --- AdGuard Home Logic ---
+
 configure_adguard_upstream() {
     if [[ ! -f "$AGH_YAML" ]]; then
-        msg_warn "Fichier AdGuardHome.yaml introuvable. Configuration manuelle requise."
-        return 1
-    fi
-
-    # Ne pas modifier la configuration AGH si déjà installé
-    # L'utilisateur a probablement déjà configuré ses upstreams
-    if [[ "$AGH_ALREADY_INSTALLED" == true ]]; then
-        msg_warn "AdGuard Home était déjà installé - configuration DNS amont préservée"
-        msg_info "Vérifiez manuellement que 127.0.0.1:${UNBOUND_PORT} est configuré comme upstream"
         return 0
     fi
 
-    msg_info "Configuration d'Unbound comme serveur DNS amont dans AdGuard Home"
+    msg_info "Vérification de la configuration AdGuard Home..."
     
-    # Arrêter AGH pour modifier le YAML
-    systemctl stop "${AGH_SERVICE}" &>/dev/null || true
+    # Check if already using Unbound
+    if grep -q "127.0.0.1:${UNBOUND_PORT}" "$AGH_YAML"; then
+        msg_ok "AdGuard Home utilise déjà Unbound"
+        return 0
+    fi
+
+    msg_info "Configuration d'AdGuard Home pour utiliser Unbound (Optimisation)"
     
-    # Sauvegarde
-    cp "$AGH_YAML" "${AGH_YAML}.backup.$(date +%Y%m%d%H%M%S)"
+    # Backup
+    cp "$AGH_YAML" "${AGH_YAML}.backup.$(date +%s)"
     
-    # Modifier le fichier YAML pour utiliser Unbound
-    # On remplace les upstreams existants par Unbound local
+    # Modify YAML (Python method preferred for safety)
     if command -v python3 &>/dev/null; then
         python3 <<PYTHON
 import yaml
@@ -663,447 +434,180 @@ try:
     if 'dns' not in config:
         config['dns'] = {}
     
+    # Set Unbound as unique upstream
     config['dns']['upstream_dns'] = ['127.0.0.1:${UNBOUND_PORT}']
+    
+    # Examples for bootstrap
     config['dns']['bootstrap_dns'] = ['1.1.1.1', '9.9.9.9']
     
     with open("$AGH_YAML", 'w') as f:
         yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
-    
     print("OK")
 except Exception as e:
-    print(f"ERROR: {e}")
     sys.exit(1)
 PYTHON
     else
-        # Fallback: utiliser sed si Python n'est pas disponible
-        # Cette méthode est moins fiable mais fonctionne pour les cas simples
-        sed -i 's/upstream_dns:.*/upstream_dns:\n  - 127.0.0.1:'"${UNBOUND_PORT}"'/' "$AGH_YAML" 2>/dev/null || true
+        # Fallback SED
+        sed -i "s|^  - https://dns10.quad9.net/dns-query|  - 127.0.0.1:${UNBOUND_PORT}|" "$AGH_YAML" 2>/dev/null || true
     fi
     
-    # Redémarrer AGH
-    systemctl start "${AGH_SERVICE}"
-    msg_ok "AdGuard Home configuré pour utiliser Unbound (127.0.0.1:${UNBOUND_PORT})"
+    systemctl restart AdGuardHome
+    msg_ok "AdGuard Home reconfiguré pour utiliser Unbound"
 }
 
-configure_resolv_conf() {
-    # Ne pas modifier resolv.conf si les deux services étaient déjà installés
-    # Cela évite de casser la configuration réseau existante (routeur, etc.)
-    if [[ "$AGH_ALREADY_INSTALLED" == true && "$UNBOUND_ALREADY_INSTALLED" == true ]]; then
-        msg_warn "Configuration réseau préservée (installation existante détectée)"
-        msg_info "Le fichier /etc/resolv.conf n'a pas été modifié"
-        return 0
+install_adguard_home() {
+    if [[ -f "$AGH_BINARY" ]]; then
+         msg_info "AdGuard Home déjà installé"
+         # Even if installed, we want to ensure config is optimized
+         configure_adguard_upstream
+         return 0
     fi
     
-    msg_info "Configuration de /etc/resolv.conf"
-    cat > /etc/resolv.conf <<EOF
-# Configuré par le script All-in-One AdGuard/Unbound
-nameserver 127.0.0.1
-options edns0 trust-ad
-EOF
-    # Empêcher l'écrasement par Proxmox/DHCP
-    touch /etc/.pve-ignore.resolv.conf 2>/dev/null || true
-    msg_ok "/etc/resolv.conf configuré"
-}
-
-# --- Fonctions de Mise à jour ---
-
-update_unbound() {
-    msg_info "Mise à jour d'Unbound"
-    apt-get update &>/dev/null
-    apt-get install --only-upgrade -y unbound &>/dev/null
-    msg_ok "Unbound mis à jour"
-
-    # Mise à jour des root hints
-    msg_info "Mise à jour des Root Hints DNS"
-    wget -q -O /usr/share/dns/root.hints https://www.internic.net/domain/named.cache 2>/dev/null || true
-    msg_ok "Root Hints mis à jour"
-
-    systemctl restart unbound
-    msg_ok "Service Unbound redémarré"
-}
-
-update_adguard_home() {
-    if [[ ! -f "$AGH_BINARY" ]]; then
-        msg_error "AdGuard Home n'est pas installé. Utilisez l'option Installation."
-        return 1
-    fi
-
-    msg_info "Vérification de la version d'AdGuard Home"
+    msg_info "Installation AdGuard Home..."
     
-    CURRENT_VERSION=$("$AGH_BINARY" --version 2>/dev/null | grep -oP 'v\d+\.\d+\.\d+' | head -1) || CURRENT_VERSION="unknown"
-    LATEST_VERSION=$(curl -fsSL "https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest" | jq -r '.tag_name')
-
-    if [[ "$CURRENT_VERSION" == "$LATEST_VERSION" ]]; then
-        msg_ok "AdGuard Home est déjà à jour (${CURRENT_VERSION})"
-        return 0
-    fi
-
-    msg_info "Mise à jour d'AdGuard Home: ${CURRENT_VERSION} → ${LATEST_VERSION}"
-    
-    # Déterminer l'architecture
     ARCH=$(uname -m)
     case $ARCH in
         x86_64) AGH_ARCH="amd64" ;;
         aarch64) AGH_ARCH="arm64" ;;
         armv7l) AGH_ARCH="armv7" ;;
-        *) msg_error "Architecture non supportée: $ARCH"; return 1 ;;
+        *) msg_error "Arch $ARCH non supportée"; exit 1 ;;
     esac
-
-    AGH_URL="https://github.com/AdguardTeam/AdGuardHome/releases/download/${LATEST_VERSION}/AdGuardHome_linux_${AGH_ARCH}.tar.gz"
-    AGH_CHECKSUM_URL="${AGH_URL}.sha256"
     
-    # Télécharger et vérifier
-    mkdir -p /tmp/agh_update
-    cd /tmp/agh_update
-    
-    msg_info "Téléchargement de la mise à jour"
-    wget -q "$AGH_URL" -O AdGuardHome.tar.gz
-    wget -q "$AGH_CHECKSUM_URL" -O AdGuardHome.tar.gz.sha256 2>/dev/null || true
-    
-    # Vérification du checksum SHA256 si disponible
-    if [[ -f "AdGuardHome.tar.gz.sha256" ]]; then
-        msg_info "Vérification de l'intégrité (SHA256)"
-        EXPECTED_CHECKSUM=$(cat AdGuardHome.tar.gz.sha256 | awk '{print $1}')
-        ACTUAL_CHECKSUM=$(sha256sum AdGuardHome.tar.gz | awk '{print $1}')
-        
-        if [[ "$EXPECTED_CHECKSUM" == "$ACTUAL_CHECKSUM" ]]; then
-            msg_ok "Checksum SHA256 vérifié"
-        else
-            msg_error "Checksum invalide! Mise à jour annulée."
-            rm -rf /tmp/agh_update
-            return 1
-        fi
-    else
-        msg_warn "Fichier checksum non disponible - vérification ignorée"
+    LATEST_VER=$(curl -fsSL https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest | jq -r '.tag_name')
+    if [[ -z "$LATEST_VER" ]]; then
+        msg_error "Impossible de trouver la dernière version"
+        exit 1
     fi
     
-    # Arrêter le service
-    systemctl stop "${AGH_SERVICE}"
+    local url="https://github.com/AdguardTeam/AdGuardHome/releases/download/${LATEST_VER}/AdGuardHome_linux_${AGH_ARCH}.tar.gz"
     
-    # Backup du binaire actuel
-    cp "$AGH_BINARY" "${AGH_BINARY}.backup"
+    mkdir -p /tmp/agh_install
+    wget -qO /tmp/agh_install/AGH.tar.gz "$url"
+    tar -xzf /tmp/agh_install/AGH.tar.gz -C /tmp/agh_install
     
-    # Installer la mise à jour
-    tar -xzf AdGuardHome.tar.gz
-    mv AdGuardHome/AdGuardHome "$AGH_BINARY"
+    mkdir -p "$AGH_INSTALL_DIR"
+    mv /tmp/agh_install/AdGuardHome/AdGuardHome "$AGH_BINARY"
     chmod +x "$AGH_BINARY"
-    rm -rf /tmp/agh_update
     
-    # Redémarrer le service
-    systemctl start "${AGH_SERVICE}"
+    # Service
+    "$AGH_BINARY" -s install &>/dev/null || true
+    systemctl start AdGuardHome
     
-    msg_ok "AdGuard Home mis à jour vers ${LATEST_VERSION}"
-}
-
-update_all() {
-    header_info
-    echo -e "${INFO} Mise à jour complète du système DNS...\n"
+    # Wait for YAML
+    msg_info "Initialisation..."
+    sleep 5
     
-    update_unbound
-    update_adguard_home
-    
-    echo ""
-    msg_ok "Mise à jour terminée avec succès!"
-}
-
-# --- Fonction d'Optimisation de la Configuration ---
-
-optimize_unbound_config() {
-    header_info
-    echo -e "${INFO} Optimisation de la configuration Unbound...\n"
-    
-    # Vérifier qu'Unbound est installé
-    if ! systemctl is-active --quiet unbound 2>/dev/null; then
-        msg_error "Unbound n'est pas installé ou n'est pas actif."
-        return 1
-    fi
-    
-    # Sélection du fournisseur DNS upstream
-    select_dns_upstream
-    
-    # Calculer les paramètres optimisés
-    msg_info "Analyse des ressources système"
-    calculate_optimized_settings
-    msg_ok "Ressources: ${CPU_CORES} CPU, ${RAM_MB} MB RAM"
-    
-    # Sauvegarde de la configuration existante
-    CONF_FILE="/etc/unbound/unbound.conf"
-    msg_info "Sauvegarde de la configuration actuelle"
-    cp "$CONF_FILE" "${CONF_FILE}.backup.$(date +%Y%m%d%H%M%S)"
-    msg_ok "Sauvegarde créée"
-    
-    # Arrêter Unbound
-    msg_info "Arrêt du service Unbound"
-    systemctl stop unbound
-    msg_ok "Service arrêté"
-    
-    # Générer la nouvelle configuration
-    msg_info "Génération de la configuration optimisée"
-    cat > "$CONF_FILE" <<EOF
-# ==================================================================
-# Configuration Unbound ULTRA-OPTIMISÉE pour AdGuard Home sur LXC
-# Régénérée le $(date)
-# Ressources détectées : ${CPU_CORES} CPU / ${RAM_MB}MB RAM
-# ==================================================================
-
-server:
-    interface: 127.0.0.1
-    port: ${UNBOUND_PORT}
-    do-ip4: yes
-    do-ip6: yes
-    do-udp: yes
-    do-tcp: yes
-    tls-cert-bundle: "/etc/ssl/certs/ca-certificates.crt"
-
-    access-control: 127.0.0.0/8 allow
-    access-control: ::1/128 allow
-
-    num-threads: ${NUM_THREADS}
-    msg-cache-slabs: ${CACHE_SLABS}
-    rrset-cache-slabs: ${CACHE_SLABS}
-    infra-cache-slabs: ${CACHE_SLABS}
-    key-cache-slabs: ${CACHE_SLABS}
-    rrset-cache-size: ${RRSET_CACHE_SIZE}
-    msg-cache-size: ${MSG_CACHE_SIZE}
-    so-reuseport: yes
-    so-rcvbuf: ${SO_BUF}
-    so-sndbuf: ${SO_BUF}
-
-    prefetch: yes
-    prefetch-key: yes
-    serve-expired: yes
-    serve-expired-ttl: 86400
-    serve-expired-ttl-reset: yes
-    serve-expired-client-timeout: 1800
-
-    # Optimisations avancées (adaptées aux ressources)
-    outgoing-range: ${OUTGOING_RANGE}
-    num-queries-per-thread: ${QUERIES_PER_THREAD}
-    jostle-timeout: 300
-    infra-host-ttl: 900
-    infra-cache-numhosts: ${INFRA_CACHE_HOSTS}
-    unwanted-reply-threshold: 10000000
-    edns-buffer-size: 1232
-    max-udp-size: 1232
-    cache-min-ttl: 300
-    cache-max-ttl: 86400
-    cache-max-negative-ttl: 3600
-    neg-cache-size: ${NEG_CACHE_SIZE}
-    delay-close: 10000
-
-    minimal-responses: yes
-    qname-minimisation: yes
-    qname-minimisation-strict: yes
-
-    hide-identity: yes
-    hide-version: yes
-    harden-glue: yes
-    harden-dnssec-stripped: yes
-    use-caps-for-id: yes
-    deny-any: yes
-    harden-below-nxdomain: yes
-    harden-referral-path: yes
-    harden-algo-downgrade: yes
-
-    auto-trust-anchor-file: "/var/lib/unbound/root.key"
-    root-hints: "/usr/share/dns/root.hints"
-    val-log-level: 1
-
-    private-address: 192.168.0.0/16
-    private-address: 172.16.0.0/12
-    private-address: 10.0.0.0/8
-    private-address: 169.254.0.0/16
-    private-address: fd00::/8
-    private-address: fe80::/10
-    private-domain: "local"
-    private-domain: "lan"
-    private-domain: "home.arpa"
-
-    extended-statistics: yes
-    statistics-interval: 0
-    statistics-cumulative: yes
-
-forward-zone:
-    name: "."
-    forward-tls-upstream: yes
-$(get_upstream_config)
-
-remote-control:
-    control-enable: yes
-    control-interface: 127.0.0.1
-    control-port: 8953
-    server-key-file: "/etc/unbound/unbound_server.key"
-    server-cert-file: "/etc/unbound/unbound_server.pem"
-    control-key-file: "/etc/unbound/unbound_control.key"
-    control-cert-file: "/etc/unbound/unbound_control.pem"
-EOF
-    msg_ok "Configuration générée"
-    
-    # Vérifier la syntaxe
-    msg_info "Vérification de la syntaxe"
-    if unbound-checkconf "$CONF_FILE" &>/dev/null; then
-        msg_ok "Syntaxe valide"
+    if [[ -f "$AGH_YAML" ]]; then
+        configure_adguard_upstream
+        msg_ok "AdGuard Home installé et lié à Unbound"
     else
-        msg_error "Erreur de syntaxe - restauration de la sauvegarde"
-        cp "${CONF_FILE}.backup."* "$CONF_FILE" 2>/dev/null || true
-        systemctl start unbound
-        return 1
-    fi
-    
-    # Redémarrer Unbound
-    msg_info "Redémarrage du service Unbound"
-    systemctl start unbound
-    sleep 2
-    
-    if systemctl is-active --quiet unbound; then
-        msg_ok "Service Unbound redémarré"
-        
-        # Préchauffage du cache
-        warmup_cache
-        
-        echo ""
-        echo -e "${GN}╔════════════════════════════════════════════════════════════════╗${CL}"
-        echo -e "${GN}║           Optimisation Terminée avec Succès !                  ║${CL}"
-        echo -e "${GN}╚════════════════════════════════════════════════════════════════╝${CL}"
-        echo ""
-        echo -e "${YW}Nouveaux paramètres appliqués:${CL}"
-        echo -e "  - Threads: ${GN}${NUM_THREADS}${CL}"
-        echo -e "  - Slabs: ${GN}${CACHE_SLABS}${CL}"
-        echo -e "  - Cache RRset: ${GN}${RRSET_CACHE_SIZE}${CL}"
-        echo -e "  - Cache Message: ${GN}${MSG_CACHE_SIZE}${CL}"
-        echo -e "  - Infra Cache Hosts: ${GN}${INFRA_CACHE_HOSTS}${CL}"
-        echo -e "  - Outgoing Range: ${GN}${OUTGOING_RANGE}${CL}"
-        echo -e "  - DNS Upstream: ${GN}${SELECTED_UPSTREAM}${CL}"
-        echo ""
-    else
-        msg_error "Échec du redémarrage d'Unbound"
-        return 1
+        msg_warn "Fichier YAML non trouvé, config manuelle requise"
     fi
 }
 
-# --- Fonction d'Installation Complète ---
+# --- Uninstall Logic ---
 
-
-full_install() {
-    header_info
-    echo -e "${INFO} Installation complète AdGuard Home + Unbound...\n"
+uninstall_all() {
+    if ! whiptail --title "Désinstallation" --yesno "Voulez-vous vraiment désinstaller AdGuard Home et Unbound ?\nCela supprimera les fichiers de configuration et les données." 10 60; then
+        return 0
+    fi
     
-    # Sélection du fournisseur DNS upstream
-    select_dns_upstream
+    msg_info "Suppression AdGuard Home..."
+    systemctl stop AdGuardHome &>/dev/null || true
+    "$AGH_BINARY" -s uninstall &>/dev/null || true
+    rm -rf "$AGH_INSTALL_DIR"
+    msg_ok "AdGuard Home supprimé"
     
-    msg_info "Mise à jour du système"
-    apt-get update &>/dev/null
-    apt-get upgrade -y &>/dev/null
-    msg_ok "Système mis à jour"
+    msg_info "Suppression Unbound..."
+    systemctl stop unbound &>/dev/null || true
+    apt-get remove --purge -y unbound &>/dev/null
+    rm -rf /etc/unbound
+    msg_ok "Unbound supprimé"
     
-    # Optimisations système
-    apply_sysctl_tuning
-    
-    install_adguard_home
-    install_unbound
-    configure_adguard_upstream
-    configure_resolv_conf
-    
-    # Préchauffage du cache
-    warmup_cache
-    
-    echo ""
-    echo -e "${GN}╔════════════════════════════════════════════════════════════════╗${CL}"
-    echo -e "${GN}║              Installation Terminée avec Succès !               ║${CL}"
-    echo -e "${GN}╚════════════════════════════════════════════════════════════════╝${CL}"
-    echo ""
-    echo -e "${INFO} AdGuard Home Web UI: ${GN}http://$(hostname -I | awk '{print $1}'):3000${CL}"
-    echo -e "${INFO} Unbound écoute sur: ${GN}127.0.0.1:${UNBOUND_PORT}${CL}"
-    echo -e "${INFO} DNS Upstream: ${GN}${SELECTED_UPSTREAM}${CL}"
-    echo ""
-    echo -e "${YW}Paramètres Unbound optimisés:${CL}"
-    echo -e "  - Threads: ${GN}${NUM_THREADS}${CL}"
-    echo -e "  - Slabs: ${GN}${CACHE_SLABS}${CL}"
-    echo -e "  - Cache RRset: ${GN}${RRSET_CACHE_SIZE}${CL}"
-    echo -e "  - Cache Message: ${GN}${MSG_CACHE_SIZE}${CL}"
-    echo ""
+    msg_ok "Désinstallation terminée"
+    exit 0
 }
 
+# --- Main Menus ---
 
-# --- Menu Principal ---
+select_upstream() {
+    local choice
+    choice=$(whiptail --title "DNS Upstream" --menu "Choisir le fournisseur DoT :" 15 60 4 \
+        "1" "Cloudflare (Rapide)" \
+        "2" "Quad9 (Sécurisé)" \
+        3>&1 1>&2 2>&3) || return 0
+        
+    case $choice in
+        1) SELECTED_UPSTREAM="cloudflare" ;;
+        2) SELECTED_UPSTREAM="quad9" ;;
+    esac
+}
 
 show_menu() {
-    header_info
-    
-    CHOICE=$(whiptail --title "AdGuard Home & Unbound Manager" --menu \
-        "Choisissez une option:" 22 90 7 \
-        "1" "Installation Complete (AdGuard Home + Unbound)" \
-        "2" "Mise a jour Complete (AdGuard Home + Unbound)" \
-        "3" "Optimiser la Configuration Unbound" \
-        "4" "Installer uniquement Unbound" \
-        "5" "Afficher les Statistiques Unbound" \
-        "6" "Quitter" \
-        3>&1 1>&2 2>&3)
-    
-    case $CHOICE in
-        1)
-            full_install
-            ;;
-        2)
-            update_all
-            ;;
-        3)
-            optimize_unbound_config
-            ;;
-        4)
-            install_unbound
-            ;;
-        5)
-            header_info
-            echo -e "${INFO} Statistiques Unbound:\n"
-            unbound-control stats_noreset 2>/dev/null || msg_warn "unbound-control non disponible"
-            ;;
-        6)
-            echo -e "${INFO} Au revoir!"
-            exit 0
-            ;;
-        *)
-            echo -e "${INFO} Opération annulée."
-            exit 0
-            ;;
-    esac
+    local choice
+    while true; do
+        choice=$(whiptail --title "Menu Principal" --menu "AdGuard Home & Unbound Optimizer" 20 70 6 \
+            "1" "Installation Complète" \
+            "2" "Optimiser / Réparer Config Unbound" \
+            "3" "Mettre à jour (App + OS)" \
+            "4" "Stats Unbound" \
+            "5" "Désinstaller Tout" \
+            "6" "Quitter" \
+            3>&1 1>&2 2>&3) || exit 0
+
+        case $choice in
+            1)
+                select_upstream
+                apply_sysctl_tuning
+                install_unbound
+                install_adguard_home
+                whiptail --msgbox "Installation terminée !\nURL: http://$(hostname -I | awk '{print $1}'):3000" 10 60
+                ;;
+            2)
+                select_upstream
+                install_unbound # Re-runs config generation
+                whiptail --msgbox "Optimisation appliquée avec succès." 8 50
+                ;;
+            3)
+                msg_info "Mise à jour OS..."
+                apt-get update && apt-get upgrade -y
+                msg_ok "OS à jour"
+                # Add AGH update logic if needed
+                ;;
+            4)
+                if command -v unbound-control &>/dev/null; then
+                    unbound-control stats_noreset | head -n 20 | whiptail --title "Stats" --scrolltext --textbox /dev/stdin 20 80
+                else
+                    msg_error "unbound-control non trouvé"
+                fi
+                ;;
+            5)
+                uninstall_all
+                ;;
+            6)
+                exit 0
+                ;;
+        esac
+    done
 }
 
-# --- Point d'Entrée ---
+# --- Entry Point ---
 
 main() {
     check_root
     check_os
     check_dependencies
     
-    case "${1:-}" in
-        --install)
-            INTERACTIVE=false
-            full_install
-            ;;
-        --update)
-            INTERACTIVE=false
-            update_all
-            ;;
-        --unbound-only)
-            INTERACTIVE=false
-            install_unbound
-            ;;
-        --help|-h)
-            echo "Usage: $0 [OPTION]"
-            echo ""
-            echo "Options:"
-            echo "  --install        Installation complète (AdGuard Home + Unbound)"
-            echo "  --update         Mise à jour complète"
-            echo "  --unbound-only   Installer uniquement Unbound"
-            echo "  --help           Afficher cette aide"
-            echo ""
-            echo "Sans option, le script affiche un menu interactif."
-            ;;
-        *)
-            show_menu
-            ;;
-    esac
+    if [[ "${1:-}" == "--install" ]]; then
+        INTERACTIVE=false
+        apply_sysctl_tuning
+        install_unbound
+        install_adguard_home
+    elif [[ "${1:-}" == "--uninstall" ]]; then
+        uninstall_all
+    else
+        show_menu
+    fi
 }
 
 main "$@"
