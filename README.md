@@ -26,20 +26,23 @@ graph TD
 
 - **AdGuard Home** : Téléchargement automatique (GitHub) avec **vérification d'intégrité SHA256**.
 - **Unbound** : Installation et configuration récursive haute performance.
-- **Mise à jour Intelligente** : Un seul clic pour tout mettre à jour (Logique de préservation réseau incluse).
+- **Récupération Intelligente** : Détecte une installation existante et optimise la configuration sans écraser vos données (filtres, stats).
 
 ### ⚙️ Optimisation Dynamique (Multi-Tiers)
 
-Le script analyse vos ressources (CPU/RAM) et adapte dynamiquement plus de 15 paramètres Unbound (`slabs`, `threads`, `caches`, `infra-cache`, etc.) selon 5 paliers :
+Le script analyse vos cœurs CPU et votre RAM pour calibrer Unbound scientifiquement :
 
-- **Micro** (< 512MB) | **Petit** (512MB-768MB) | **Moyen** (768MB-1GB) | **Grand** (1-2GB) | **Premium** (> 2GB)
+- **Threads & Slabs** : Alignés sur le nombre de cœurs (Puissance de 2) pour réduire la contention (Lock Contention).
+- **Buffers Réseau** : Augmentation des buffers UDP (Sysctl) pour encaisser les pics de trafic.
+- **Profils Mémoire** : De **Micro** (< 512MB) à **Premium** (> 4GB).
 
-### 🛡️ Sécurité & Performance
+### 🛡️ Sécurité & Gestion
 
-- **DNS-over-TLS (DoT)** : Vos requêtes amont sont chiffrées.
-- **DNSSEC** : Validation de l'authenticité des réponses.
-- **Sysctl Tuning** : Optimisation de la pile TCP/UDP du LXC pour le trafic DNS.
-- **Cache Warm-up** : Préchauffage automatique des domaines populaires après installation.
+- **DNS-over-TLS (DoT)** : Cloudflare ou Quad9 configurés nativement.
+- **Nouveau Menu (v3.1.0)** :
+  - **Réparer / Optimiser** : Recalcule la config Unbound sans réinstaller.
+  - **Désinstaller** : Suppression propre et complète.
+  - **Stats** : Vue en temps réel de l'efficacité du cache.
 
 ## 🚀 Installation Rapide
 
@@ -70,13 +73,13 @@ Options:
 Sans option, le script affiche un menu interactif.
 ```
 
-## 🎛️ Menu Interactif (v2.0.0)
+## 🎛️ Menu Interactif (v3.1.0)
 
 1. **Installation Complete** : Déploiement total AdGuard Home + Unbound.
-2. **Mise a jour Complete** : Tout mettre à jour vers les dernières versions.
-3. **Optimiser la Configuration Unbound** : Recalibre Unbound sur une installation existante (idéal si vous changez les ressources du LXC ou d'Upstream).
-4. **Installer uniquement Unbound** : Pour ajouter Unbound à un AdGuard Home existant.
-5. **Afficher les Statistiques Unbound** : Consultez l'efficacité de votre cache.
+2. **Optimiser / Réparer Config** : Recalibre Unbound sur une installation existante (idéal si vous changez les ressources du LXC).
+3. **Mettre à jour** : Apps + OS.
+4. **Stats Unbound** : Consultez l'efficacité de votre cache.
+5. **Désinstaller Tout** : Suppression complète.
 6. **Quitter**
 
 ## ⚙️ Configuration par défaut
