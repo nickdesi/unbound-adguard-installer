@@ -184,14 +184,17 @@ extract_network_config() {
         exit 1
     fi
     
-    # Extraire l'IP avec CIDR (ex: 192.168.1.104/24) - compatible POSIX
-    SOURCE_IP=$(echo "$SOURCE_NET0" | sed -n 's/.*ip=\([0-9.\/]*\).*/\1/p')
+    # Debug: afficher la config brute
+    msg_info "Config net0 brute: $SOURCE_NET0"
     
-    # Extraire la gateway - compatible POSIX
-    SOURCE_GW=$(echo "$SOURCE_NET0" | sed -n 's/.*gw=\([0-9.]*\).*/\1/p')
+    # Extraire l'IP avec CIDR - méthode plus robuste avec awk
+    SOURCE_IP=$(echo "$SOURCE_NET0" | tr ',' '\n' | grep '^ip=' | sed 's/ip=//' | grep -v 'dhcp')
     
-    if [[ -z "$SOURCE_IP" ]]; then
-        msg_error "Impossible d'extraire l'IP du conteneur source."
+    # Extraire la gateway - méthode plus robuste avec awk
+    SOURCE_GW=$(echo "$SOURCE_NET0" | tr ',' '\n' | grep '^gw=' | sed 's/gw=//')
+    
+    if [[ -z "$SOURCE_IP" ]] || [[ "$SOURCE_IP" == "dhcp" ]]; then
+        msg_error "Impossible d'extraire l'IP du conteneur source (ou déjà en DHCP)."
         msg_info "Config net0: $SOURCE_NET0"
         exit 1
     fi
