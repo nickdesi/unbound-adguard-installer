@@ -112,6 +112,37 @@ sudo unbound-checkconf
 dig @127.0.0.1 -p 5335 google.com
 ```
 
+## 🔄 Migration LXC Debian → Alpine
+
+Un script dédié permet de migrer votre configuration DNS complète vers un conteneur Alpine Linux.
+
+### Prérequis
+
+1. Conteneur **source** : LXC Debian avec AdGuard Home + Unbound (installés via ce script)
+2. Conteneur **cible** : LXC Alpine avec AdGuard Home pré-installé via [community-scripts](https://github.com/community-scripts/ProxmoxVE)
+
+### Utilisation (depuis l'hôte Proxmox)
+
+```bash
+# Télécharger et exécuter
+curl -fsSL https://raw.githubusercontent.com/nickdesi/unbound-adguard-installer/main/migrate_dns_lxc.sh -o migrate_dns_lxc.sh
+chmod +x migrate_dns_lxc.sh
+sudo ./migrate_dns_lxc.sh <SOURCE_ID> <TARGET_ID>
+
+# Exemple : migrer du CT 100 vers CT 101
+sudo ./migrate_dns_lxc.sh 100 101
+```
+
+### Fonctionnalités du script de migration
+
+- ✅ Sauvegarde automatique via `pct pull`
+- ✅ Migration des configs AdGuard (YAML + data/stats)
+- ✅ Migration de la config Unbound
+- ✅ Installation d'Unbound sur Alpine (`apk add`)
+- ✅ Gestion des services systemd (Debian) ↔ OpenRC (Alpine)
+- ✅ Vérifications de sécurité et permissions
+- ✅ Test de résolution DNS post-migration
+
 ## 📜 Licence
 
 Ce projet est sous licence MIT. Voir le fichier [LICENSE](LICENSE) pour plus de détails.
