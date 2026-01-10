@@ -280,9 +280,9 @@ swap_network_config() {
     pct start "$SOURCE_ID"
     pct start "$TARGET_ID"
     
-    # Attendre que les conteneurs démarrent
-    msg_info "Attente du démarrage des conteneurs..."
-    sleep 5
+    # Attendre que les conteneurs démarrent et que le réseau s'initialise
+    msg_info "Attente du démarrage des conteneurs (10s)..."
+    sleep 10
     
     # Vérifier que la cible a bien la nouvelle IP
     local new_target_ip
@@ -415,12 +415,26 @@ backup_from_source() {
 install_unbound_alpine() {
     msg_info "Installation d'Unbound sur le conteneur Alpine..."
     
+    # Configurer un DNS temporaire pour que apk puisse fonctionner
+    msg_info "Configuration DNS temporaire pour l'installation..."
+    pct exec "$TARGET_ID" -- sh -c 'echo "nameserver 1.1.1.1" > /etc/resolv.conf'
+    pct exec "$TARGET_ID" -- sh -c 'echo "nameserver 8.8.8.8" >> /etc/resolv.conf'
+    
+    # Attendre que le réseau soit stable
+    sleep 3
+    
     # Vérifier si Unbound est déjà installé
     if pct exec "$TARGET_ID" -- which unbound &>/dev/null; then
         msg_ok "Unbound déjà installé sur Alpine"
     else
-        pct exec "$TARGET_ID" -- apk add --no-cache unbound
-        msg_ok "Unbound installé sur Alpine"
+        # Mettre à jour les dépôts et installer
+        pct exec "$TARGET_ID" -- apk update 2>/dev/null || true
+        if pct exec "$TARGET_ID" -- apk add --no-cache unbound; then
+            msg_ok "Unbound installé sur Alpine"
+        else
+            msg_error "Échec de l'installation d'Unbound - vérifiez la connectivité réseau"
+            msg_warn "Vous pouvez l'installer manuellement: pct exec $TARGET_ID -- apk add unbound"
+        fi
     fi
     
     # S'assurer que le dossier /etc/unbound existe
