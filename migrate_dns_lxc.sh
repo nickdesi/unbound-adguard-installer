@@ -16,6 +16,8 @@ set -Eeuo pipefail
 # --- Variables d'entrée ---
 SOURCE_ID="${1:-}"
 TARGET_ID="${2:-}"
+TARGET_IP="${3:-}"   # Optionnel: IP à appliquer sur la cible (ex: 192.168.1.104/24)
+TARGET_GW="${4:-}"   # Optionnel: Gateway (ex: 192.168.1.1)
 
 # --- Couleurs et formatage ---
 readonly RD='\033[01;31m'
@@ -86,12 +88,16 @@ EOF
 # ==========================================================================
 
 usage() {
-    echo "Usage: $0 <SOURCE_ID> <TARGET_ID>"
+    echo "Usage: $0 <SOURCE_ID> <TARGET_ID> [TARGET_IP] [TARGET_GW]"
     echo ""
     echo "  SOURCE_ID : ID du conteneur LXC Debian source (ex: 100)"
-    echo "  TARGET_ID : ID du conteneur LXC Alpine cible (ex: 101)"
+    echo "  TARGET_ID : ID du conteneur LXC Alpine cible (ex: 111)"
+    echo "  TARGET_IP : (Optionnel) IP à appliquer sur la cible (ex: 192.168.1.104/24)"
+    echo "  TARGET_GW : (Optionnel) Gateway (ex: 192.168.1.1)"
     echo ""
-    echo "Exemple: $0 100 101"
+    echo "Exemples:"
+    echo "  $0 100 111                              # Extrait l'IP de la source automatiquement"
+    echo "  $0 100 111 192.168.1.104/24 192.168.1.1 # Spécifie l'IP manuellement"
     exit 1
 }
 
@@ -174,7 +180,24 @@ check_source_files() {
 # ==========================================================================
 
 extract_network_config() {
-    msg_info "Extraction de la configuration réseau du conteneur source..."
+    msg_info "Extraction de la configuration réseau..."
+    
+    # Si IP fournie en paramètre, l'utiliser directement
+    if [[ -n "$TARGET_IP" ]]; then
+        SOURCE_IP="$TARGET_IP"
+        SOURCE_GW="${TARGET_GW:-}"
+        msg_ok "IP manuelle spécifiée: ${SOURCE_IP}"
+        if [[ -n "$SOURCE_GW" ]]; then
+            msg_ok "Gateway manuelle: ${SOURCE_GW}"
+        fi
+        
+        # Récupérer quand même la config net0 source pour le swap
+        SOURCE_NET0=$(pct config "$SOURCE_ID" | grep -E '^net0:' | sed 's/^net0: //')
+        return 0
+    fi
+    
+    # Sinon, extraire depuis la source
+    msg_info "Tentative d'extraction automatique depuis le conteneur source..."
     
     # Récupérer la config net0 complète
     SOURCE_NET0=$(pct config "$SOURCE_ID" | grep -E '^net0:' | sed 's/^net0: //')
@@ -185,17 +208,18 @@ extract_network_config() {
     fi
     
     # Debug: afficher la config brute
-    msg_info "Config net0 brute: $SOURCE_NET0"
+    msg_info "Config net0 source: $SOURCE_NET0"
     
-    # Extraire l'IP avec CIDR - méthode plus robuste avec awk
+    # Extraire l'IP avec CIDR
     SOURCE_IP=$(echo "$SOURCE_NET0" | tr ',' '\n' | grep '^ip=' | sed 's/ip=//' | grep -v 'dhcp')
     
-    # Extraire la gateway - méthode plus robuste avec awk
+    # Extraire la gateway
     SOURCE_GW=$(echo "$SOURCE_NET0" | tr ',' '\n' | grep '^gw=' | sed 's/gw=//')
     
     if [[ -z "$SOURCE_IP" ]] || [[ "$SOURCE_IP" == "dhcp" ]]; then
-        msg_error "Impossible d'extraire l'IP du conteneur source (ou déjà en DHCP)."
-        msg_info "Config net0: $SOURCE_NET0"
+        msg_error "Le conteneur source est en DHCP - impossible d'extraire l'IP."
+        msg_warn "Relancez avec l'IP en paramètre:"
+        msg_info "  ./migrate_dns_lxc.sh $SOURCE_ID $TARGET_ID 192.168.1.104/24 192.168.1.1"
         exit 1
     fi
     
