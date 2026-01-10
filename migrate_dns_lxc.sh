@@ -184,11 +184,11 @@ extract_network_config() {
         exit 1
     fi
     
-    # Extraire l'IP avec CIDR (ex: 192.168.1.104/24)
-    SOURCE_IP=$(echo "$SOURCE_NET0" | grep -oP 'ip=\K[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+')
+    # Extraire l'IP avec CIDR (ex: 192.168.1.104/24) - compatible POSIX
+    SOURCE_IP=$(echo "$SOURCE_NET0" | sed -n 's/.*ip=\([0-9.\/]*\).*/\1/p')
     
-    # Extraire la gateway
-    SOURCE_GW=$(echo "$SOURCE_NET0" | grep -oP 'gw=\K[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
+    # Extraire la gateway - compatible POSIX
+    SOURCE_GW=$(echo "$SOURCE_NET0" | sed -n 's/.*gw=\([0-9.]*\).*/\1/p')
     
     if [[ -z "$SOURCE_IP" ]]; then
         msg_error "Impossible d'extraire l'IP du conteneur source."
@@ -207,18 +207,18 @@ swap_network_config() {
     local target_net0
     target_net0=$(pct config "$TARGET_ID" | grep -E '^net0:' | sed 's/^net0: //')
     
-    # Extraire le nom de l'interface bridge (ex: vmbr0)
+    # Extraire le nom de l'interface bridge (ex: vmbr0) - compatible POSIX
     local bridge
-    bridge=$(echo "$target_net0" | grep -oP 'bridge=\K[^,]+')
+    bridge=$(echo "$target_net0" | sed -n 's/.*bridge=\([^,]*\).*/\1/p')
     
-    # Extraire le nom de l'interface (ex: eth0)
+    # Extraire le nom de l'interface (ex: eth0) - compatible POSIX
     local iface_name
-    iface_name=$(echo "$target_net0" | grep -oP 'name=\K[^,]+')
+    iface_name=$(echo "$target_net0" | sed -n 's/.*name=\([^,]*\).*/\1/p')
     iface_name=${iface_name:-eth0}
     
-    # Extraire l'adresse MAC (si présente)
+    # Extraire l'adresse MAC (si présente) - compatible POSIX
     local hwaddr
-    hwaddr=$(echo "$target_net0" | grep -oP 'hwaddr=\K[^,]+')
+    hwaddr=$(echo "$target_net0" | sed -n 's/.*hwaddr=\([^,]*\).*/\1/p')
     
     # Étape 1: Arrêter les deux conteneurs
     msg_info "Arrêt des conteneurs pour le changement d'IP..."
