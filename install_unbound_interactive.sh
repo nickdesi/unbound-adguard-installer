@@ -7,7 +7,7 @@
 # Installe, configure et met à jour AdGuard Home + Unbound sur Debian/Ubuntu LXC.
 # ==========================================================================
 # Auteur: Nicolas (Optimisé par Context7 Agent)
-# Version: 3.0.0 (Optimized)
+# Version: 3.2.4
 # Licence: MIT
 # ==========================================================================
 
@@ -16,18 +16,14 @@ set -Eeuo pipefail
 trap cleanup EXIT
 trap 'error_handler $? $LINENO $BASH_COMMAND' ERR
 
-# --- Global# IMPERATIVE: Stability Release
-# Version: 3.2.4 (Stats Display Fix)
+# --- Global Constants ---
 readonly SCRIPT_VERSION="3.2.4"
 readonly LOG_FILE="/var/log/adguard-unbound-installer.log"
 
-# App
-readonly APP="AdGuard Home & Unbound"
 readonly UNBOUND_PORT=5335
 readonly AGH_INSTALL_DIR="/opt/AdGuardHome"
 readonly AGH_BINARY="${AGH_INSTALL_DIR}/AdGuardHome"
 readonly AGH_YAML="${AGH_INSTALL_DIR}/AdGuardHome.yaml"
-readonly AGH_SERVICE="AdGuardHome"
 
 # Colors
 readonly YW="\033[33m"
@@ -43,8 +39,6 @@ readonly INFO="${BL}ℹ${CL}"
 readonly WARN="${YW}⚠${CL}"
 
 # Global State Variables (mutable)
-AGH_ALREADY_INSTALLED=false
-UNBOUND_ALREADY_INSTALLED=false
 INTERACTIVE=true
 SELECTED_UPSTREAM="cloudflare"
 CPU_CORES=1
@@ -66,16 +60,16 @@ error_handler() {
 
 # --- Logging & UI Functions ---
 
-spinner() {
-    local chars="/-\|"
-    local pid=$!
-    while kill -0 $pid 2>/dev/null; do
-        for (( i=0; i<${#chars}; i++ )); do
-            sleep 0.1
-            echo -en "${BFR}${HOLD} ${chars:$i:1}"
-        done
+# --- Utility: Active wait for a file/condition with timeout ---
+wait_for_file() {
+    local file="$1"
+    local timeout="${2:-30}"
+    local elapsed=0
+    while [[ ! -f "$file" ]] && (( elapsed < timeout )); do
+        sleep 1
+        (( elapsed++ ))
     done
-    echo -en "${BFR}"
+    [[ -f "$file" ]]
 }
 
 log() {
@@ -115,8 +109,8 @@ header_info() {
  / ___ / /_/ / / /_/ / /_/ / /_/ / /  / /_/ /  / __  / /_/ / / / / / /  __/  
 /_/  |_\__,_/  \____/\__,_/\__,_/_/   \__,_/  /_/ /_/\____/_/ /_/ /_/\___/   
                                         & Unbound DNS Optimizer
-                                        v3.0.0 (High Performance)
 EOF
+    echo -e "                                        v${SCRIPT_VERSION}"
     echo -e "${BL}====================================================================${CL}"
     echo -e "${GN}   AdGuard Home + Unbound :: Installation & Tuning${CL}"
     echo -e "${BL}====================================================================${CL}"
@@ -146,9 +140,8 @@ check_os() {
 }
 
 check_dependencies() {
-    local deps=("curl" "wget" "tar" "jq" "whiptail" "bc" "python3")
+    local deps=("curl" "wget" "tar" "jq" "whiptail")
     local missing_deps=()
-    local python_packages=("python3-yaml")
     
     for dep in "${deps[@]}"; do
         if ! command -v "$dep" &> /dev/null; then
@@ -156,9 +149,11 @@ check_dependencies() {
         fi
     done
     
-    # Check for python3-yaml specifically
-    if ! dpkg -s python3-yaml &>/dev/null && ! python3 -c "import yaml" &>/dev/null; then
-         missing_deps+=("python3-yaml")
+    # python3 + python3-yaml (needed for safe YAML manipulation)
+    if ! command -v python3 &>/dev/null; then
+        missing_deps+=("python3" "python3-yaml")
+    elif ! python3 -c "import yaml" &>/dev/null 2>&1; then
+        missing_deps+=("python3-yaml")
     fi
     
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
@@ -206,7 +201,7 @@ get_power_of_two() {
     while (( p * 2 <= n )); do
         (( p *= 2 ))
     done
-    echo $p
+    echo "$p"
 }
 
 get_system_resources() {
@@ -220,17 +215,25 @@ calculate_optimized_settings() {
     # Allow manual override in interactive mode
     if [[ "$INTERACTIVE" == "true" ]]; then
         if ! whiptail --title "Ressources Système" --yesno "Détecté : ${CPU_CORES} CPU, ${RAM_MB} MB RAM.\n\nUtiliser ces valeurs pour l'auto-configuration ?" 10 60; then
-             # Manual Input with Cancel handling
+             # Manual Input with Cancel handling + validation
              local user_cpu
              if user_cpu=$(whiptail --inputbox "Nombre de coeurs CPU :" 8 40 "$CPU_CORES" 3>&1 1>&2 2>&3); then
-                 CPU_CORES=$user_cpu
+                 if [[ "$user_cpu" =~ ^[0-9]+$ ]] && (( user_cpu > 0 && user_cpu <= 256 )); then
+                     CPU_CORES=$user_cpu
+                 else
+                     msg_warn "Valeur CPU invalide ('$user_cpu'). Utilisation de la valeur détectée ($CPU_CORES)."
+                 fi
              else
                  msg_warn "Saisie annulée. Utilisation de la valeur détectée ($CPU_CORES)."
              fi
              
              local user_ram
              if user_ram=$(whiptail --inputbox "RAM en MB :" 8 40 "$RAM_MB" 3>&1 1>&2 2>&3); then
-                 RAM_MB=$user_ram
+                 if [[ "$user_ram" =~ ^[0-9]+$ ]] && (( user_ram >= 64 && user_ram <= 1048576 )); then
+                     RAM_MB=$user_ram
+                 else
+                     msg_warn "Valeur RAM invalide ('$user_ram'). Utilisation de la valeur détectée ($RAM_MB)."
+                 fi
              else
                  msg_warn "Saisie annulée. Utilisation de la valeur détectée ($RAM_MB)."
              fi
@@ -247,7 +250,7 @@ calculate_optimized_settings() {
         NUM_THREADS=1
     else
         # Find nearest power of 2 (e.g., 6 cores -> 4 slabs)
-        CACHE_SLABS=$(get_power_of_two $CPU_CORES)
+        CACHE_SLABS=$(get_power_of_two "$CPU_CORES")
         # Ensure at least 2 slabs if >1 core
         (( CACHE_SLABS < 2 )) && CACHE_SLABS=2
     fi
@@ -422,16 +425,22 @@ EOF
 }
 
 get_upstream_forward_lines() {
-    # Helper to print forward-addr lines
-    if [[ "$SELECTED_UPSTREAM" == "cloudflare" ]]; then
-        echo "forward-addr: 1.1.1.1@853#cloudflare-dns.com"
-        echo "    forward-addr: 1.0.0.1@853#cloudflare-dns.com"
-    elif [[ "$SELECTED_UPSTREAM" == "quad9" ]]; then
-        echo "forward-addr: 9.9.9.9@853#dns.quad9.net"
-        echo "    forward-addr: 149.112.112.112@853#dns.quad9.net"
-    else
-         echo "forward-addr: 1.1.1.1@853#cloudflare-dns.com"
-    fi
+    # Helper to print forward-addr lines (consistent indentation)
+    case "$SELECTED_UPSTREAM" in
+        cloudflare)
+            echo "forward-addr: 1.1.1.1@853#cloudflare-dns.com"
+            echo "    forward-addr: 1.0.0.1@853#cloudflare-dns.com"
+            ;;
+        quad9)
+            echo "forward-addr: 9.9.9.9@853#dns.quad9.net"
+            echo "    forward-addr: 149.112.112.112@853#dns.quad9.net"
+            ;;
+        *)
+            # Default fallback
+            echo "forward-addr: 1.1.1.1@853#cloudflare-dns.com"
+            echo "    forward-addr: 1.0.0.1@853#cloudflare-dns.com"
+            ;;
+    esac
 }
 
 # --- AdGuard Home Logic ---
@@ -526,9 +535,11 @@ install_adguard_home() {
     "$AGH_BINARY" -s install &>/dev/null || true
     systemctl start AdGuardHome
     
-    # Wait for YAML
-    msg_info "Initialisation..."
-    sleep 5
+    # Wait for YAML (active wait instead of fixed sleep)
+    msg_info "Attente de l'initialisation d'AdGuard Home..."
+    if wait_for_file "$AGH_YAML" 30; then
+        msg_ok "Fichier YAML initialisé"
+    fi
     
     if [[ -f "$AGH_YAML" ]]; then
         configure_adguard_upstream
@@ -581,11 +592,20 @@ update_script() {
     local remote_url="https://raw.githubusercontent.com/nickdesi/unbound-adguard-installer/main/install_unbound_interactive.sh"
     local local_file="$0"
     
-    # Download content specifically to check version/diff (simple overwrite for now is safer to avoid complexity)
     if curl -fsSL "$remote_url" -o "${local_file}.tmp"; then
+        # Compare versions before overwriting
+        local remote_version
+        remote_version=$(grep -m1 'readonly SCRIPT_VERSION=' "${local_file}.tmp" | cut -d'"' -f2)
+        
+        if [[ -n "$remote_version" ]] && [[ "$remote_version" == "$SCRIPT_VERSION" ]]; then
+            msg_ok "Déjà à jour (v${SCRIPT_VERSION})"
+            rm -f "${local_file}.tmp"
+            return 0
+        fi
+        
         chmod +x "${local_file}.tmp"
         mv "${local_file}.tmp" "$local_file"
-        msg_ok "Script mis à jour ! Relancez-le."
+        msg_ok "Script mis à jour : v${SCRIPT_VERSION} → v${remote_version:-inconnue}. Relancez-le."
         exit 0
     else
         msg_error "Échec du téléchargement de la mise à jour."
@@ -594,6 +614,7 @@ update_script() {
 }
 
 show_menu() {
+    header_info
     local choice
     while true; do
         choice=$(whiptail --title "Menu (v${SCRIPT_VERSION})" --menu "Choisir une action:" 18 50 7 \
@@ -621,7 +642,7 @@ show_menu() {
                 ;;
             3)
                 msg_info "Mise à jour OS..."
-                apt-get update && apt-get upgrade -y
+                apt-get update &>/dev/null && apt-get upgrade -y &>/dev/null
                 msg_ok "OS à jour"
                 ;;
             4)
@@ -632,12 +653,12 @@ show_menu() {
                     local stats_file=$(mktemp)
                     if unbound-control stats_noreset > "$stats_file" 2>&1; then
                         if [[ -s "$stats_file" ]]; then
-                            whiptail --title "Stats Unbound" --scrolltext --textbox "$stats_file" 20 70
+                            whiptail --title "Stats Unbound (v${SCRIPT_VERSION})" --scrolltext --textbox "$stats_file" 20 70
                         else
-                            whiptail --msgbox "Pas de stats disponibles.\nUnbound vient peut-etre de demarrer." 10 50
+                            whiptail --msgbox "Pas de stats disponibles.\nUnbound vient peut-être de démarrer." 10 50
                         fi
                     else
-                        whiptail --msgbox "Erreur unbound-control:\n$(cat $stats_file)" 12 60
+                        whiptail --msgbox "Erreur unbound-control:\n$(cat "$stats_file")" 12 60
                     fi
                     rm -f "$stats_file"
                 else
@@ -654,23 +675,66 @@ show_menu() {
     done
 }
 
+# --- Usage / Help ---
+
+show_help() {
+    echo "Usage: $0 [OPTION]"
+    echo ""
+    echo "Options:"
+    echo "  --install        Installation complète (AdGuard Home + Unbound)"
+    echo "  --unbound-only   Installer/reconfigurer uniquement Unbound"
+    echo "  --update         Mettre à jour ce script depuis GitHub"
+    echo "  --uninstall      Désinstaller AdGuard Home et Unbound"
+    echo "  --help           Afficher cette aide"
+    echo ""
+    echo "Sans option, le script affiche un menu interactif."
+    exit 0
+}
+
 # --- Entry Point ---
 
 main() {
+    # Handle --help before root check (so non-root users can see help)
+    if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+        show_help
+    fi
+    
     check_root
     check_os
     check_dependencies
     
-    if [[ "${1:-}" == "--install" ]]; then
-        INTERACTIVE=false
-        apply_sysctl_tuning
-        install_unbound
-        install_adguard_home
-    elif [[ "${1:-}" == "--uninstall" ]]; then
-        uninstall_all
-    else
-        show_menu
-    fi
+    case "${1:-}" in
+        --install)
+            INTERACTIVE=false
+            header_info
+            apply_sysctl_tuning
+            install_unbound
+            install_adguard_home
+            msg_ok "Installation terminée !"
+            ;;
+        --unbound-only)
+            INTERACTIVE=false
+            header_info
+            select_upstream
+            install_unbound
+            msg_ok "Unbound installé/reconfiguré !"
+            ;;
+        --update)
+            header_info
+            update_script
+            ;;
+        --uninstall)
+            header_info
+            uninstall_all
+            ;;
+        "")
+            show_menu
+            ;;
+        *)
+            msg_error "Option inconnue: $1"
+            show_help
+            ;;
+    esac
 }
 
 main "$@"

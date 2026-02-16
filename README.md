@@ -66,9 +66,10 @@ sudo ./install_unbound_interactive.sh
 Usage: ./install_unbound_interactive.sh [OPTION]
 
 Options:
-  --install        Installation complete (AdGuard Home + Unbound)
-  --update         Mise a jour complete
-  --unbound-only   Installer uniquement Unbound
+  --install        Installation complète (AdGuard Home + Unbound)
+  --unbound-only   Installer/reconfigurer uniquement Unbound
+  --update         Mettre à jour ce script depuis GitHub
+  --uninstall      Désinstaller AdGuard Home et Unbound
   --help           Afficher l'aide
 
 Sans option, le script affiche un menu interactif.
