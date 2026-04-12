@@ -16,8 +16,17 @@ set -Eeuo pipefail
 trap cleanup EXIT
 trap 'error_handler $? $LINENO $BASH_COMMAND' ERR
 
+# --- Load Shared Libraries ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
+    source "${SCRIPT_DIR}/lib/common.sh"
+fi
+if [[ -f "${SCRIPT_DIR}/lib/health_checks.sh" ]]; then
+    source "${SCRIPT_DIR}/lib/health_checks.sh"
+fi
+
 # --- Global Constants ---
-readonly SCRIPT_VERSION="3.2.4"
+readonly SCRIPT_VERSION="3.2.5"
 readonly LOG_FILE="/var/log/adguard-unbound-installer.log"
 
 readonly UNBOUND_PORT=5335
@@ -414,9 +423,17 @@ EOF
 
     # Check & Start
     if unbound-checkconf &>/dev/null; then
-        systemctl restart unbound
-        systemctl enable unbound &>/dev/null
-        msg_ok "Configuration Unbound valide et service démarré"
+        # Safe restart with health check if available
+        if type restart_service_safely &>/dev/null; then
+            restart_service_safely unbound 30 || {
+                msg_error "Échec redémarrage sécurisé Unbound"
+                exit 1
+            }
+        else
+            systemctl restart unbound
+            systemctl enable unbound &>/dev/null
+            msg_ok "Configuration Unbound valide et service démarré"
+        fi
     else
         msg_error "Configuration Unbound invalide !"
         unbound-checkconf
@@ -460,8 +477,12 @@ configure_adguard_upstream() {
 
     msg_info "Configuration d'AdGuard Home pour utiliser Unbound (Optimisation)"
     
-    # Backup
-    cp "$AGH_YAML" "${AGH_YAML}.backup.$(date +%s)"
+    # Backup avec fonction commune si disponible
+    if type create_backup &>/dev/null; then
+        create_backup "$AGH_YAML" || true
+    else
+        cp "$AGH_YAML" "${AGH_YAML}.backup.$(date +%s)"
+    fi
     
     # Modify YAML (Python method preferred for safety)
     if command -v python3 &>/dev/null; then
@@ -515,7 +536,13 @@ install_adguard_home() {
         *) msg_error "Arch $ARCH non supportée"; exit 1 ;;
     esac
     
-    LATEST_VER=$(curl -fsSL https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest | jq -r '.tag_name')
+    # Fetch latest version with retry
+    if type fetch_json_api &>/dev/null; then
+        LATEST_VER=$(fetch_json_api "https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest" | jq -r '.tag_name')
+    else
+        LATEST_VER=$(curl -fsSL https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest | jq -r '.tag_name')
+    fi
+    
     if [[ -z "$LATEST_VER" ]]; then
         msg_error "Impossible de trouver la dernière version"
         exit 1
@@ -524,7 +551,16 @@ install_adguard_home() {
     local url="https://github.com/AdguardTeam/AdGuardHome/releases/download/${LATEST_VER}/AdGuardHome_linux_${AGH_ARCH}.tar.gz"
     
     mkdir -p /tmp/agh_install
-    wget -qO /tmp/agh_install/AGH.tar.gz "$url"
+    
+    # Download with retry logic
+    if type download_with_retry &>/dev/null; then
+        if ! download_with_retry "$url" "/tmp/agh_install/AGH.tar.gz" 3; then
+            msg_error "Échec téléchargement AdGuard Home après 3 tentatives"
+            return 1
+        fi
+    else
+        wget -qO /tmp/agh_install/AGH.tar.gz "$url"
+    fi
     tar -xzf /tmp/agh_install/AGH.tar.gz -C /tmp/agh_install
     
     mkdir -p "$AGH_INSTALL_DIR"
@@ -544,6 +580,16 @@ install_adguard_home() {
     if [[ -f "$AGH_YAML" ]]; then
         configure_adguard_upstream
         msg_ok "AdGuard Home installé et lié à Unbound"
+        
+        # Health check post-installation si disponible
+        if type check_adguard_health &>/dev/null; then
+            msg_info "Vérification santé post-installation..."
+            if check_adguard_health &>/dev/null; then
+                msg_ok "Health check AdGuard: OK ✓"
+            else
+                msg_warn "Health check AdGuard: voir logs pour détails"
+            fi
+        fi
     else
         msg_warn "Fichier YAML non trouvé, config manuelle requise"
     fi
@@ -633,7 +679,18 @@ show_menu() {
                 apply_sysctl_tuning
                 install_unbound
                 install_adguard_home
-                whiptail --msgbox "Installation terminée !\nURL: http://$(hostname -I | awk '{print $1}'):3000" 10 60
+                
+                # Health check complet si disponible
+                if type run_full_health_check &>/dev/null; then
+                    msg_info "Exécution health check complet..."
+                    if run_full_health_check &>/dev/null; then
+                        whiptail --msgbox "Installation terminée et vérifiée ! ✓\n\nURL: http://$(hostname -I | awk '{print $1}'):3000\n\nTous les tests santé passés avec succès." 12 60
+                    else
+                        whiptail --msgbox "Installation terminée !\n\nURL: http://$(hostname -I | awk '{print $1}'):3000\n\nNote: Certains tests santé ont échoué.\nConsultez /var/log/adguard-unbound-installer.log" 14 60
+                    fi
+                else
+                    whiptail --msgbox "Installation terminée !\nURL: http://$(hostname -I | awk '{print $1}'):3000" 10 60
+                fi
                 ;;
             2)
                 select_upstream
