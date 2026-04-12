@@ -26,7 +26,7 @@ if [[ -f "${SCRIPT_DIR}/lib/health_checks.sh" ]]; then
 fi
 
 # --- Global Constants ---
-readonly SCRIPT_VERSION="3.2.5"
+readonly SCRIPT_VERSION="3.3.0"
 readonly LOG_FILE="/var/log/adguard-unbound-installer.log"
 
 readonly UNBOUND_PORT=5335
@@ -52,6 +52,9 @@ INTERACTIVE=true
 SELECTED_UPSTREAM="cloudflare"
 CPU_CORES=1
 RAM_MB=512
+_OP_START=0
+STEP_CURRENT=0
+STEP_TOTAL=0
 
 # --- Error Handling & Cleanup ---
 
@@ -87,13 +90,27 @@ log() {
 
 msg_info() {
     local msg="$1"
-    echo -ne " ${HOLD} ${YW}${msg}...${CL}"
+    _OP_START=$(date +%s%3N)
+    local step_prefix=""
+    if (( STEP_TOTAL > 0 )); then
+        step_prefix="${YW}[${STEP_CURRENT}/${STEP_TOTAL}]${CL} "
+    fi
+    echo -ne " ${HOLD} ${step_prefix}${YW}${msg}...${CL}"
     log "INFO: $msg"
 }
 
 msg_ok() {
     local msg="$1"
-    echo -e "${BFR} ${CM} ${GN}${msg}${CL}"
+    local elapsed_str=""
+    if (( _OP_START > 0 )); then
+        local _now; _now=$(date +%s%3N)
+        local _ms=$(( _now - _OP_START ))
+        _OP_START=0
+        if (( _ms >= 500 )); then
+            elapsed_str=" ${YW}(${_ms}ms)${CL}"
+        fi
+    fi
+    echo -e "${BFR} ${CM} ${GN}${msg}${CL}${elapsed_str}"
     log "OK: $msg"
 }
 
@@ -107,6 +124,12 @@ msg_warn() {
     local msg="$1"
     echo -e "${BFR} ${WARN} ${YW}${msg}${CL}"
     log "WARN: $msg"
+}
+
+msg_step() {
+    (( ++STEP_CURRENT ))
+    echo -e "\n ${BL}━━ Étape ${STEP_CURRENT}/${STEP_TOTAL}: ${GN}$1${CL}"
+    log "STEP ${STEP_CURRENT}/${STEP_TOTAL}: $1"
 }
 
 header_info() {
@@ -149,14 +172,17 @@ check_os() {
 }
 
 check_dependencies() {
-    local deps=("curl" "wget" "tar" "jq" "whiptail")
     local missing_deps=()
     
-    for dep in "${deps[@]}"; do
-        if ! command -v "$dep" &> /dev/null; then
+    for dep in curl wget tar jq whiptail openssl; do
+        if ! command -v "$dep" &>/dev/null; then
             missing_deps+=("$dep")
         fi
     done
+    # dig est dans bind9-dnsutils
+    if ! command -v dig &>/dev/null; then
+        missing_deps+=("bind9-dnsutils")
+    fi
     
     # python3 + python3-yaml (needed for safe YAML manipulation)
     if ! command -v python3 &>/dev/null; then
@@ -167,8 +193,13 @@ check_dependencies() {
     
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
         msg_info "Installation des dépendances manquantes: ${missing_deps[*]}"
-        apt-get update &>/dev/null
-        apt-get install -y "${missing_deps[@]}" &>/dev/null
+        # Mise à jour cache apt uniquement si > 1h
+        local cache_age
+        cache_age=$(stat -c %Y /var/lib/apt/lists 2>/dev/null || echo 0)
+        if (( $(date +%s) - cache_age > 3600 )); then
+            apt-get update -qq &>/dev/null
+        fi
+        apt-get install -y --no-install-recommends "${missing_deps[@]}" &>/dev/null
         msg_ok "Dépendances installées"
     fi
 }
@@ -309,12 +340,12 @@ calculate_optimized_settings() {
 }
 
 install_unbound() {
-    if systemctl is-active --quiet unbound 2>/dev/null; then
-        msg_warn "Unbound est déjà actif (sera reconfiguré)"
-    else
+    if ! dpkg -l unbound 2>/dev/null | grep -q "^ii "; then
         msg_info "Installation du paquet Unbound"
-        apt-get install -y unbound ca-certificates dnsutils &>/dev/null
+        apt-get install -y --no-install-recommends unbound ca-certificates dnsutils &>/dev/null
         msg_ok "Unbound installé"
+    else
+        msg_ok "Paquet Unbound déjà présent"
     fi
 
     # Disable systemd-resolved if conflict
@@ -407,8 +438,10 @@ remote-control:
     control-cert-file: "/etc/unbound/unbound_control.pem"
 EOF
 
-    # Root Hints
-    wget -q -O /usr/share/dns/root.hints https://www.internic.net/domain/named.cache 2>/dev/null || true
+    # Root Hints (téléchargement en arrière-plan pendant la génération des clés)
+    mkdir -p /usr/share/dns
+    wget -q -O /usr/share/dns/root.hints https://www.internic.net/domain/named.cache 2>/dev/null &
+    local _root_hints_pid=$!
 
     # Setup Control Keys
     if [[ ! -f "/etc/unbound/unbound_server.key" ]]; then
@@ -420,6 +453,9 @@ EOF
     chown -R unbound:unbound /etc/unbound
     chmod 755 /etc/unbound
     chmod 640 /etc/unbound/unbound_control.*
+
+    # Attendre fin du téléchargement root hints
+    wait "${_root_hints_pid:-}" 2>/dev/null || true
 
     # Check & Start
     if unbound-checkconf &>/dev/null; then
@@ -442,7 +478,6 @@ EOF
 }
 
 get_upstream_forward_lines() {
-    # Helper to print forward-addr lines (consistent indentation)
     case "$SELECTED_UPSTREAM" in
         cloudflare)
             echo "forward-addr: 1.1.1.1@853#cloudflare-dns.com"
@@ -452,8 +487,15 @@ get_upstream_forward_lines() {
             echo "forward-addr: 9.9.9.9@853#dns.quad9.net"
             echo "    forward-addr: 149.112.112.112@853#dns.quad9.net"
             ;;
+        google)
+            echo "forward-addr: 8.8.8.8@853#dns.google"
+            echo "    forward-addr: 8.8.4.4@853#dns.google"
+            ;;
+        adguard)
+            echo "forward-addr: 94.140.14.14@853#dns.adguard.com"
+            echo "    forward-addr: 94.140.15.15@853#dns.adguard.com"
+            ;;
         *)
-            # Default fallback
             echo "forward-addr: 1.1.1.1@853#cloudflare-dns.com"
             echo "    forward-addr: 1.0.0.1@853#cloudflare-dns.com"
             ;;
@@ -526,6 +568,11 @@ install_adguard_home() {
          return 0
     fi
     
+    # Vérification espace disque (150 MB minimum)
+    if type check_disk_space &>/dev/null; then
+        check_disk_space /opt 150 || { msg_error "Espace disque insuffisant (150 MB requis dans /opt)"; return 1; }
+    fi
+
     msg_info "Installation AdGuard Home..."
     
     ARCH=$(uname -m)
@@ -615,22 +662,27 @@ uninstall_all() {
     msg_ok "Unbound supprimé"
     
     msg_ok "Désinstallation terminée"
-    exit 0
 }
 
 # --- Main Menus ---
 
 select_upstream() {
     local choice
-    choice=$(whiptail --title "DNS Upstream" --menu "Choisir le fournisseur DoT :" 15 60 4 \
-        "1" "Cloudflare (Rapide)" \
-        "2" "Quad9 (Sécurisé)" \
+    choice=$(whiptail --title "DNS-over-TLS Upstream" \
+        --menu "Actuel: ${SELECTED_UPSTREAM}\nChoisir le fournisseur upstream :" 18 65 4 \
+        "1" "Cloudflare  1.1.1.1   (Rapide, No-log)" \
+        "2" "Quad9       9.9.9.9   (Sécurisé, DNSSEC strict)" \
+        "3" "Google      8.8.8.8   (Fiable, Universel)" \
+        "4" "AdGuard DNS 94.140.x  (Anti-pub natif)" \
         3>&1 1>&2 2>&3) || return 0
         
     case $choice in
         1) SELECTED_UPSTREAM="cloudflare" ;;
         2) SELECTED_UPSTREAM="quad9" ;;
+        3) SELECTED_UPSTREAM="google" ;;
+        4) SELECTED_UPSTREAM="adguard" ;;
     esac
+    log "Upstream sélectionné: ${SELECTED_UPSTREAM}"
 }
 
 update_script() {
@@ -660,72 +712,89 @@ update_script() {
 }
 
 show_menu() {
-    header_info
     local choice
     while true; do
-        choice=$(whiptail --title "Menu (v${SCRIPT_VERSION})" --menu "Choisir une action:" 18 50 7 \
-            "1" "Installer" \
-            "2" "Reparer" \
-            "3" "MAJ Systeme" \
-            "4" "MAJ Script" \
-            "5" "Stats" \
-            "6" "Desinstaller" \
-            "7" "Quitter" \
+        header_info
+        local ub_status agh_status
+        ub_status=$(systemctl is-active unbound 2>/dev/null || echo "inactif")
+        agh_status=$(systemctl is-active AdGuardHome 2>/dev/null || echo "inactif")
+        local desc="Unbound: ${ub_status}  |  AdGuard: ${agh_status}  |  Upstream: ${SELECTED_UPSTREAM}"
+
+        choice=$(whiptail --title "Menu (v${SCRIPT_VERSION})" \
+            --menu "${desc}" 20 65 8 \
+            "1" "Installer (Complet)" \
+            "2" "Reparer / Reconfigurer" \
+            "3" "Health Check + Diagnostics" \
+            "4" "Stats Unbound" \
+            "5" "MAJ Systeme" \
+            "6" "MAJ Script" \
+            "7" "Desinstaller" \
+            "8" "Quitter" \
             3>&1 1>&2 2>&3) || exit 0
 
         case $choice in
             1)
+                STEP_TOTAL=4; STEP_CURRENT=0
                 select_upstream
+                msg_step "Optimisations réseau (sysctl)"
                 apply_sysctl_tuning
+                msg_step "Installation & configuration Unbound"
                 install_unbound
+                msg_step "Installation AdGuard Home"
                 install_adguard_home
-                
-                # Health check complet si disponible
-                if type run_full_health_check &>/dev/null; then
-                    msg_info "Exécution health check complet..."
-                    if run_full_health_check &>/dev/null; then
-                        whiptail --msgbox "Installation terminée et vérifiée ! ✓\n\nURL: http://$(hostname -I | awk '{print $1}'):3000\n\nTous les tests santé passés avec succès." 12 60
-                    else
-                        whiptail --msgbox "Installation terminée !\n\nURL: http://$(hostname -I | awk '{print $1}'):3000\n\nNote: Certains tests santé ont échoué.\nConsultez /var/log/adguard-unbound-installer.log" 14 60
-                    fi
+                msg_step "Health check post-installation"
+                local local_ip; local_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+                STEP_TOTAL=0; STEP_CURRENT=0
+                if type run_full_health_check &>/dev/null && run_full_health_check &>/dev/null; then
+                    whiptail --msgbox "✓ Installation réussie et vérifiée !\n\nURL: http://${local_ip}:3000\n\nTous les tests passés avec succès." 12 60
                 else
-                    whiptail --msgbox "Installation terminée !\nURL: http://$(hostname -I | awk '{print $1}'):3000" 10 60
+                    whiptail --msgbox "Installation terminée.\n\nURL: http://${local_ip}:3000\n\nConsultez: ${LOG_FILE}" 12 60
                 fi
                 ;;
             2)
                 select_upstream
-                install_unbound # Re-runs config generation
-                whiptail --msgbox "Optimisation appliquée avec succès." 8 50
+                install_unbound
+                configure_adguard_upstream
+                whiptail --msgbox "Reconfiguration appliquée avec succès." 8 55
                 ;;
             3)
-                msg_info "Mise à jour OS..."
-                apt-get update &>/dev/null && apt-get upgrade -y &>/dev/null
-                msg_ok "OS à jour"
+                if type run_full_health_check &>/dev/null; then
+                    local hc_file; hc_file=$(mktemp)
+                    run_full_health_check 2>&1 | tee "$hc_file" >/dev/null
+                    if type benchmark_dns_performance &>/dev/null; then
+                        benchmark_dns_performance 100 2>&1 | tee -a "$hc_file" >/dev/null
+                    fi
+                    whiptail --title "Diagnostics (v${SCRIPT_VERSION})" --scrolltext --textbox "$hc_file" 24 72
+                    rm -f "$hc_file"
+                else
+                    msg_warn "Module health_checks non chargé"
+                fi
                 ;;
             4)
-                update_script
-                ;;
-            5)
                 if command -v unbound-control &>/dev/null; then
-                    local stats_file=$(mktemp)
-                    if unbound-control stats_noreset > "$stats_file" 2>&1; then
-                        if [[ -s "$stats_file" ]]; then
-                            whiptail --title "Stats Unbound (v${SCRIPT_VERSION})" --scrolltext --textbox "$stats_file" 20 70
-                        else
-                            whiptail --msgbox "Pas de stats disponibles.\nUnbound vient peut-être de démarrer." 10 50
-                        fi
+                    local stats_file; stats_file=$(mktemp)
+                    if unbound-control stats_noreset > "$stats_file" 2>&1 && [[ -s "$stats_file" ]]; then
+                        whiptail --title "Stats Unbound" --scrolltext --textbox "$stats_file" 24 72
                     else
-                        whiptail --msgbox "Erreur unbound-control:\n$(cat "$stats_file")" 12 60
+                        whiptail --msgbox "Stats non disponibles (Unbound inactif ?)." 8 50
                     fi
                     rm -f "$stats_file"
                 else
-                    msg_error "unbound-control non trouve"
+                    whiptail --msgbox "unbound-control non disponible.\nInstallez Unbound d'abord." 8 55
                 fi
                 ;;
+            5)
+                msg_info "Mise à jour OS en cours..."
+                apt-get update -qq &>/dev/null && apt-get upgrade -y -qq &>/dev/null
+                msg_ok "Système à jour"
+                ;;
             6)
-                uninstall_all
+                update_script
                 ;;
             7)
+                uninstall_all
+                ;;
+            8)
                 exit 0
                 ;;
         esac
@@ -738,11 +807,15 @@ show_help() {
     echo "Usage: $0 [OPTION]"
     echo ""
     echo "Options:"
-    echo "  --install        Installation complète (AdGuard Home + Unbound)"
-    echo "  --unbound-only   Installer/reconfigurer uniquement Unbound"
-    echo "  --update         Mettre à jour ce script depuis GitHub"
-    echo "  --uninstall      Désinstaller AdGuard Home et Unbound"
-    echo "  --help           Afficher cette aide"
+    echo "  --install            Installation complète (AdGuard Home + Unbound)"
+    echo "  --repair             Reconfigurer Unbound + AdGuard (sans réinstaller)"
+    echo "  --unbound-only       Installer/reconfigurer uniquement Unbound"
+    echo "  --update             Mettre à jour ce script depuis GitHub"
+    echo "  --uninstall          Désinstaller AdGuard Home et Unbound"
+    echo "  --health             Exécuter le health check complet"
+    echo "  --stats              Afficher les stats Unbound en temps réel"
+    echo "  --upstream <nom>     Forcer l'upstream (cloudflare|quad9|google|adguard)"
+    echo "  --help               Afficher cette aide"
     echo ""
     echo "Sans option, le script affiche un menu interactif."
     exit 0
@@ -759,22 +832,51 @@ main() {
     check_root
     check_os
     check_dependencies
+
+    # Support --upstream <name> as optional first argument
+    if [[ "${1:-}" == "--upstream" ]] && [[ -n "${2:-}" ]]; then
+        SELECTED_UPSTREAM="$2"
+        shift 2
+    fi
     
     case "${1:-}" in
         --install)
             INTERACTIVE=false
             header_info
+            STEP_TOTAL=3; STEP_CURRENT=0
+            msg_step "Optimisations sysctl"
             apply_sysctl_tuning
+            msg_step "Installation Unbound"
             install_unbound
+            msg_step "Installation AdGuard Home"
             install_adguard_home
+            STEP_TOTAL=0
             msg_ok "Installation terminée !"
             ;;
-        --unbound-only)
+        --repair|--unbound-only)
             INTERACTIVE=false
             header_info
-            select_upstream
             install_unbound
-            msg_ok "Unbound installé/reconfiguré !"
+            configure_adguard_upstream
+            msg_ok "Unbound reconfiguré !"
+            ;;
+        --health)
+            header_info
+            if type run_full_health_check &>/dev/null; then
+                run_full_health_check
+            else
+                msg_error "Module health_checks non disponible"
+                exit 1
+            fi
+            ;;
+        --stats)
+            header_info
+            if command -v unbound-control &>/dev/null; then
+                unbound-control stats_noreset
+            else
+                msg_error "unbound-control non disponible"
+                exit 1
+            fi
             ;;
         --update)
             header_info

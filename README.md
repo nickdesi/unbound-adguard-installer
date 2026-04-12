@@ -1,6 +1,7 @@
 # AdGuard Home & Unbound All-in-One Installer pour Proxmox LXC
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Version](https://img.shields.io/badge/version-3.3.0-blue.svg)](CHANGELOG.md)
 
 Ce script Bash installe et configure **AdGuard Home** et **Unbound** comme solution DNS complète sur un conteneur **Proxmox LXC** (basé sur Debian/Ubuntu).
 
@@ -38,15 +39,44 @@ Le script analyse vos cœurs CPU et votre RAM pour calibrer Unbound scientifique
 
 ### 🛡️ Sécurité & Gestion
 
-- **DNS-over-TLS (DoT)** : Cloudflare ou Quad9 configurés nativement.
-- **Nouveau Menu (v3.1.0)** :
-  - **Réparer / Optimiser** : Recalcule la config Unbound sans réinstaller.
-  - **Désinstaller** : Suppression propre et complète.
+- **DNS-over-TLS (DoT)** : **4 fournisseurs** au choix — Cloudflare, Quad9, Google DNS, AdGuard DNS.
+- **Menu enrichi (v3.3.0)** :
+  - **Health Check + Diagnostics** : Diagnostic complet Unbound & AdGuard + benchmark DNS en un clic.
+  - **Réparer / Reconfigurer** : Recalcule la config Unbound sans réinstaller.
   - **Stats** : Vue en temps réel de l'efficacité du cache.
+  - **Désinstaller** : Suppression propre et complète (retour menu, pas de sortie forcée).
 - **Auto-Update (v3.2.0)** : Le script peut se mettre à jour tout seul.
 - **Production-Ready (v3.2.5)** : Retry logic, backup automatique, health checks intégrés.
+- **Performance & UX (v3.3.0)** : Indicateur d'étapes, temps écoulé par opération, skip apt intelligent.
 
-## 🧪 Nouveauté v3.2.5 : Production-Ready Utilities & Tests
+## 🆕 Nouveautés v3.3.0
+
+### ⚡ Performances
+
+- **Skip apt intelligent** : `apt-get install unbound` ignoré si le paquet est déjà présent (`dpkg -l`)
+- **Root hints en arrière-plan** : téléchargement parallèle pendant la génération des clés TLS → gain ~2-3s
+- **Cache apt** : `apt-get update` skippé si le cache a moins d'1 heure
+- `--no-install-recommends` sur tous les `apt-get install`
+
+### 🎨 User Experience
+
+- **Compteur d'étapes** : chaque opération affiche `[2/4]` dans le prompt
+- **Temps écoulé** : les opérations longues (≥500ms) affichent leur durée : `✓ Unbound installé (1 234ms)`
+- **Statut live dans le menu** : `Unbound: active | AdGuard: active | Upstream: cloudflare`
+- **4 fournisseurs DoT** : Cloudflare, Quad9, **Google DNS**, **AdGuard DNS**
+
+### 🔧 Nouveaux flags CLI
+
+| Flag | Description |
+|------|-------------|
+| `--repair` | Reconfigure Unbound + upstream AGH sans réinstaller |
+| `--health` | Lance le health check complet en mode non-interactif |
+| `--stats` | Affiche les stats Unbound en temps réel |
+| `--upstream <nom>` | Force l'upstream (ex: `--upstream google`) |
+
+---
+
+## 🧪 v3.2.5 : Production-Ready Utilities & Tests
 
 ### Bibliothèques Utilitaires (v3.2.5)
 
@@ -101,30 +131,52 @@ sudo ./install_unbound_interactive.sh
 ## 📋 Options de Ligne de Commande
 
 ```text
-Usage: ./install_unbound_interactive.sh [OPTION]
+Usage: ./install_unbound_interactive.sh [--upstream <nom>] [OPTION]
 
 Options:
-  --install        Installation complète (AdGuard Home + Unbound)
-  --unbound-only   Installer/reconfigurer uniquement Unbound
-  --update         Mettre à jour ce script depuis GitHub
-  --uninstall      Désinstaller AdGuard Home et Unbound
-  --help           Afficher l'aide
+  --install            Installation complète (AdGuard Home + Unbound)
+  --repair             Reconfigurer Unbound + AdGuard (sans réinstaller)
+  --unbound-only       Installer/reconfigurer uniquement Unbound
+  --health             Exécuter le health check complet
+  --stats              Afficher les stats Unbound en temps réel
+  --update             Mettre à jour ce script depuis GitHub
+  --uninstall          Désinstaller AdGuard Home et Unbound
+  --upstream <nom>     Forcer l'upstream (cloudflare|quad9|google|adguard)
+  --help               Afficher l'aide
 
 Sans option, le script affiche un menu interactif.
 ```
 
-## 🎛️ Menu Interactif (v3.2.5)
+### Exemples
 
-1. **Installation Complète (Safe & Idempotent)** : Déploiement total AdGuard Home + Unbound.
-   - ✅ Retry automatique si téléchargement échoue (3 tentatives)
-   - ✅ Backup auto avant modification config
-   - ✅ Health check complet post-installation
-2. **Optimiser / Réparer Config Unbound** : Recalibre Unbound sur une installation existante (idéal si vous changez les ressources du LXC).
-3. **Mettre à jour OS & Paquets** : Debian/Ubuntu upgrade.
-4. **Mettre à jour ce Script** : Récupère la dernière version depuis GitHub.
-5. **Stats Unbound** : Consultez l'efficacité de votre cache.
-6. **Désinstaller Tout** : Suppression complète.
-7. **Quitter**
+```bash
+# Installation silencieuse avec Google DNS
+sudo ./install_unbound_interactive.sh --upstream google --install
+
+# Diagnostic rapide
+sudo ./install_unbound_interactive.sh --health
+
+# Stats live
+sudo ./install_unbound_interactive.sh --stats
+
+# Reconfigurer l'upstream sans tout réinstaller
+sudo ./install_unbound_interactive.sh --upstream quad9 --repair
+```
+
+## 🎛️ Menu Interactif (v3.3.0)
+
+Le menu affiche en en-tête le statut live des services et l'upstream actif.
+
+| # | Action | Description |
+|---|--------|-------------|
+| 1 | **Installer (Complet)** | Déploiement total AGH + Unbound, avec compteur d'étapes et health check final |
+| 2 | **Réparer / Reconfigurer** | Recalibre Unbound + upstream AGH sans réinstaller |
+| 3 | **Health Check + Diagnostics** | Diagnostic complet 10-points + benchmark DNS |
+| 4 | **Stats Unbound** | Vue scrollable des stats cache en temps réel |
+| 5 | **MAJ Système** | `apt-get upgrade` Debian/Ubuntu |
+| 6 | **MAJ Script** | Mise à jour depuis GitHub |
+| 7 | **Désinstaller** | Suppression propre, retour au menu |
+| 8 | **Quitter** | — |
 
 ## ⚙️ Configuration par défaut
 
