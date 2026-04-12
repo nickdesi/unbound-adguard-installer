@@ -45,6 +45,43 @@ Le script analyse vos cœurs CPU et votre RAM pour calibrer Unbound scientifique
   - **Stats** : Vue en temps réel de l'efficacité du cache.
 - **Auto-Update (v3.2.0)** : Le script peut se mettre à jour tout seul.
 
+## 🧪 Nouveauté : Production-Ready Utilities & Tests
+
+### Bibliothèques Utilitaires
+
+Le projet inclut maintenant des **bibliothèques bash production-ready** suivant les standards [bash-pro](https://github.com/sickn33/antigravity-awesome-skills) :
+
+- **`lib/common.sh`** - 12+ fonctions utilitaires :
+  - ✅ Retry logic réseau avec validation checksum
+  - ✅ Validation IP/Port robuste
+  - ✅ Backup/Rollback automatique
+  - ✅ Gestion services avec health checks
+  - ✅ Opérations fichiers atomiques
+
+- **`lib/health_checks.sh`** - Diagnostics DNS complets :
+  - ✅ Tests résolution DNS, DNSSEC, DoT
+  - ✅ Health checks Unbound & AdGuard (5 vérifications chacun)
+  - ✅ Benchmark performance (queries/sec)
+  - ✅ Génération rapports détaillés
+
+### Suite de Tests Automatisés
+
+```bash
+# Exécuter tous les tests
+./tests/test_suite.sh
+
+# Test spécifique
+./tests/test_suite.sh --test validate_ipv4
+
+# 25 tests : validation, système, performance
+```
+
+### Documentation Contributeurs
+
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** - Standards de code, processus de contribution
+- **[USAGE_GUIDE.md](USAGE_GUIDE.md)** - Exemples d'intégration et utilisation avancée
+- **[IMPROVEMENTS.md](IMPROVEMENTS.md)** - Détails techniques des améliorations
+
 ## 🚀 Installation Rapide
 
 ```bash
@@ -113,6 +150,22 @@ sudo unbound-checkconf
 dig @127.0.0.1 -p 5335 google.com
 ```
 
+### Health Check Automatisé (Nouveau)
+
+```bash
+# Sourcer la bibliothèque
+source lib/health_checks.sh
+
+# Exécuter le diagnostic complet
+run_full_health_check
+
+# Générer un rapport de performance
+generate_performance_report
+
+# Benchmark (1000 requêtes)
+benchmark_dns_performance 1000
+```
+
 ## 🔄 Migration LXC Debian → Alpine
 
 Un script dédié permet de migrer votre configuration DNS complète vers un conteneur Alpine Linux.
@@ -132,11 +185,38 @@ sudo ./migrate_dns_lxc.sh <SOURCE_ID> <TARGET_ID>
 
 # Exemple : migrer du CT 100 vers CT 101
 sudo ./migrate_dns_lxc.sh 100 101
+```� Développement & Contribution
+
+Contributions bienvenues ! Le projet suit les standards **bash-pro** avec :
+
+- ✅ 25 tests automatisés (`./tests/test_suite.sh`)
+- ✅ Linting shellcheck obligatoire
+- ✅ Documentation complète
+- ✅ Guide de contribution : [CONTRIBUTING.md](CONTRIBUTING.md)
+
+### Structure du Projet
+
+```
+├── install_unbound_interactive.sh  # Script principal
+├── migrate_dns_lxc.sh              # Migration Debian → Alpine
+├── lib/
+│   ├── common.sh                   # Fonctions utilitaires
+│   └── health_checks.sh            # Tests santé DNS
+├── tests/
+│   └── test_suite.sh               # Suite de tests automatisés
+└── docs/
+    ├── CONTRIBUTING.md             # Guide contributeurs
+    ├── USAGE_GUIDE.md              # Guide utilisation
+    └── IMPROVEMENTS.md             # Détails améliorations
 ```
 
-### Fonctionnalités du script de migration
+## 🙏 Crédits
 
-- ✅ Sauvegarde automatique via `pct pull`
+- Inspiré par [tteck's Proxmox VE Helper-Scripts](https://github.com/community-scripts/ProxmoxVE)
+- [AdGuard Home](https://adguard.com/adguard-home/overview.html)
+- [NLnet Labs Unbound](https://nlnetlabs.nl/projects/unbound/about/)
+- Standards bash : [antigravity-awesome-skills](https://github.com/sickn33/antigravity-awesome-skills)
+- Token optimization : [RTK](https://github.com/rtk-ai/rtk
 - ✅ Migration des configs AdGuard (YAML + data/stats)
 - ✅ Migration de la config Unbound
 - ✅ Installation d'Unbound sur Alpine (`apk add`)
