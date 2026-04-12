@@ -44,12 +44,13 @@ Le script analyse vos cœurs CPU et votre RAM pour calibrer Unbound scientifique
   - **Désinstaller** : Suppression propre et complète.
   - **Stats** : Vue en temps réel de l'efficacité du cache.
 - **Auto-Update (v3.2.0)** : Le script peut se mettre à jour tout seul.
+- **Production-Ready (v3.2.5)** : Retry logic, backup automatique, health checks intégrés.
 
-## 🧪 Nouveauté : Production-Ready Utilities & Tests
+## 🧪 Nouveauté v3.2.5 : Production-Ready Utilities & Tests
 
-### Bibliothèques Utilitaires
+### Bibliothèques Utilitaires (v3.2.5)
 
-Le projet inclut maintenant des **bibliothèques bash production-ready** suivant les standards [bash-pro](https://github.com/sickn33/antigravity-awesome-skills) :
+Le script principal **intègre automatiquement** des bibliothèques bash production-ready suivant les standards [bash-pro](https://github.com/sickn33/antigravity-awesome-skills) :
 
 - **`lib/common.sh`** - 12+ fonctions utilitaires :
   - ✅ Retry logic réseau avec validation checksum
@@ -112,9 +113,12 @@ Options:
 Sans option, le script affiche un menu interactif.
 ```
 
-## 🎛️ Menu Interactif (v3.2.0)
+## 🎛️ Menu Interactif (v3.2.5)
 
 1. **Installation Complète (Safe & Idempotent)** : Déploiement total AdGuard Home + Unbound.
+   - ✅ Retry automatique si téléchargement échoue (3 tentatives)
+   - ✅ Backup auto avant modification config
+   - ✅ Health check complet post-installation
 2. **Optimiser / Réparer Config Unbound** : Recalibre Unbound sur une installation existante (idéal si vous changez les ressources du LXC).
 3. **Mettre à jour OS & Paquets** : Debian/Ubuntu upgrade.
 4. **Mettre à jour ce Script** : Récupère la dernière version depuis GitHub.
@@ -127,6 +131,8 @@ Sans option, le script affiche un menu interactif.
 - **Unbound** : Port `5335` (localhost)
 - **AdGuard Home UI** : Port `3000`
 - **Logs** : `/var/log/adguard-unbound-installer.log`
+- **Bibliothèques** : `lib/common.sh`, `lib/health_checks.sh` (chargées automatiquement)
+- **Tests** : `./tests/test_suite.sh` (25 tests automatisés)
 
 ## 🔧 Dépannage & Logs
 
