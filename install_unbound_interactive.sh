@@ -6,8 +6,8 @@
 # Script inspiré du style "Proxmox VE Helper-Scripts" (tteck/community-scripts)
 # Installe, configure et met à jour AdGuard Home + Unbound sur Debian/Ubuntu LXC.
 # ==========================================================================
-# Auteur: Nicolas (Optimisé par Context7 Agent)
-# Version: 3.2.4
+# Auteur: Nicolas
+# Version: 3.4.0
 # Licence: MIT
 # ==========================================================================
 
@@ -18,21 +18,17 @@ trap 'error_handler $? $LINENO $BASH_COMMAND' ERR
 
 # --- Load Shared Libraries ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
-    source "${SCRIPT_DIR}/lib/common.sh"
-fi
-if [[ -f "${SCRIPT_DIR}/lib/health_checks.sh" ]]; then
-    source "${SCRIPT_DIR}/lib/health_checks.sh"
-fi
+[[ -f "${SCRIPT_DIR}/lib/common.sh" ]]       && source "${SCRIPT_DIR}/lib/common.sh"
+[[ -f "${SCRIPT_DIR}/lib/health_checks.sh" ]] && source "${SCRIPT_DIR}/lib/health_checks.sh"
 
 # --- Global Constants ---
-readonly SCRIPT_VERSION="3.3.0"
+readonly SCRIPT_VERSION="3.4.0"
 readonly LOG_FILE="/var/log/adguard-unbound-installer.log"
-
 readonly UNBOUND_PORT=5335
 readonly AGH_INSTALL_DIR="/opt/AdGuardHome"
 readonly AGH_BINARY="${AGH_INSTALL_DIR}/AdGuardHome"
 readonly AGH_YAML="${AGH_INSTALL_DIR}/AdGuardHome.yaml"
+readonly VALID_UPSTREAMS=("cloudflare" "quad9" "google" "adguard")
 
 # Colors
 readonly YW="\033[33m"
@@ -50,6 +46,7 @@ readonly WARN="${YW}⚠${CL}"
 # Global State Variables (mutable)
 INTERACTIVE=true
 SELECTED_UPSTREAM="cloudflare"
+DRY_RUN=false
 CPU_CORES=1
 RAM_MB=512
 _OP_START=0
@@ -59,27 +56,31 @@ STEP_TOTAL=0
 # --- Error Handling & Cleanup ---
 
 cleanup() {
-    # Clean up temp directories if they exist
     rm -rf /tmp/agh_install /tmp/agh_update 2>/dev/null || true
 }
 
 error_handler() {
-    local exit_code="$1"
-    local line_number="$2"
-    local command="$3"
-    msg_error "Erreur détectée ligne ${line_number}: commande '${command}' a échoué (code ${exit_code})"
+    local exit_code="$1" line_number="$2" command="$3"
+    msg_error "Erreur ligne ${line_number}: '${command}' a échoué (code ${exit_code})"
+}
+
+# --- Dry-run wrapper ---
+# Usage: run_cmd <cmd> [args...]
+# En mode dry-run, affiche la commande sans l'exécuter.
+run_cmd() {
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "  [DRY-RUN] $*"
+    else
+        "$@"
+    fi
 }
 
 # --- Logging & UI Functions ---
 
-# --- Utility: Active wait for a file/condition with timeout ---
 wait_for_file() {
-    local file="$1"
-    local timeout="${2:-30}"
-    local elapsed=0
+    local file="$1" timeout="${2:-30}" elapsed=0
     while [[ ! -f "$file" ]] && (( elapsed < timeout )); do
-        sleep 1
-        (( elapsed++ ))
+        sleep 1; (( elapsed++ ))
     done
     [[ -f "$file" ]]
 }
@@ -92,23 +93,18 @@ msg_info() {
     local msg="$1"
     _OP_START=$(date +%s%3N)
     local step_prefix=""
-    if (( STEP_TOTAL > 0 )); then
-        step_prefix="${YW}[${STEP_CURRENT}/${STEP_TOTAL}]${CL} "
-    fi
+    (( STEP_TOTAL > 0 )) && step_prefix="${YW}[${STEP_CURRENT}/${STEP_TOTAL}]${CL} "
     echo -ne " ${HOLD} ${step_prefix}${YW}${msg}...${CL}"
     log "INFO: $msg"
 }
 
 msg_ok() {
-    local msg="$1"
-    local elapsed_str=""
+    local msg="$1" elapsed_str=""
     if (( _OP_START > 0 )); then
         local _now; _now=$(date +%s%3N)
         local _ms=$(( _now - _OP_START ))
         _OP_START=0
-        if (( _ms >= 500 )); then
-            elapsed_str=" ${YW}(${_ms}ms)${CL}"
-        fi
+        (( _ms >= 500 )) && elapsed_str=" ${YW}(${_ms}ms)${CL}"
     fi
     echo -e "${BFR} ${CM} ${GN}${msg}${CL}${elapsed_str}"
     log "OK: $msg"
@@ -116,7 +112,7 @@ msg_ok() {
 
 msg_error() {
     local msg="$1"
-    echo -e "${BFR} ${CROSS} ${RD}${msg}${CL}"
+    echo -e "${BFR} ${CROSS} ${RD}${msg}${CL}" >&2
     log "ERROR: $msg"
 }
 
@@ -162,7 +158,7 @@ check_os() {
     if [[ -f /etc/os-release ]]; then
         . /etc/os-release
         if [[ "$ID" != "debian" && "$ID" != "ubuntu" ]]; then
-            msg_error "Ce script est conçu pour Debian ou Ubuntu. OS détecté: $ID"
+            msg_error "OS non supporté: $ID (Debian/Ubuntu requis)"
             exit 1
         fi
     else
@@ -173,45 +169,48 @@ check_os() {
 
 check_dependencies() {
     local missing_deps=()
-    
     for dep in curl wget tar jq whiptail openssl; do
-        if ! command -v "$dep" &>/dev/null; then
-            missing_deps+=("$dep")
-        fi
+        command -v "$dep" &>/dev/null || missing_deps+=("$dep")
     done
-    # dig est dans bind9-dnsutils
-    if ! command -v dig &>/dev/null; then
-        missing_deps+=("bind9-dnsutils")
-    fi
-    
-    # python3 + python3-yaml (needed for safe YAML manipulation)
+    command -v dig &>/dev/null || missing_deps+=("bind9-dnsutils")
     if ! command -v python3 &>/dev/null; then
         missing_deps+=("python3" "python3-yaml")
     elif ! python3 -c "import yaml" &>/dev/null 2>&1; then
         missing_deps+=("python3-yaml")
     fi
-    
+
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
         msg_info "Installation des dépendances manquantes: ${missing_deps[*]}"
-        # Mise à jour cache apt uniquement si > 1h
         local cache_age
         cache_age=$(stat -c %Y /var/lib/apt/lists 2>/dev/null || echo 0)
-        if (( $(date +%s) - cache_age > 3600 )); then
-            apt-get update -qq &>/dev/null
-        fi
+        (( $(date +%s) - cache_age > 3600 )) && apt-get update -qq &>/dev/null
         apt-get install -y --no-install-recommends "${missing_deps[@]}" &>/dev/null
         msg_ok "Dépendances installées"
     fi
+}
+
+# --- Upstream Validation ---
+
+# Vérifie que SELECTED_UPSTREAM est une valeur connue
+validate_upstream() {
+    local up="$1"
+    local valid
+    for valid in "${VALID_UPSTREAMS[@]}"; do
+        [[ "$up" == "$valid" ]] && return 0
+    done
+    msg_error "Upstream invalide: '$up'. Valeurs acceptées: ${VALID_UPSTREAMS[*]}"
+    return 1
 }
 
 # --- Network Optimization (Sysctl) ---
 
 apply_sysctl_tuning() {
     msg_info "Application des optimisations réseau (sysctl)"
-    
     local SYSCTL_CONF="/etc/sysctl.d/99-dns-optimization.conf"
-    
-    # Values tuned for high-throughput UDP (DNS)
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "  [DRY-RUN] Écriture de $SYSCTL_CONF"
+        return 0
+    fi
     cat > "$SYSCTL_CONF" <<EOF
 # Optimisations DNS (Généré par Installer v${SCRIPT_VERSION})
 net.core.rmem_max = 8388608
@@ -223,8 +222,6 @@ net.ipv4.udp_mem = 65536 131072 262144
 net.ipv4.conf.all.accept_redirects = 0
 net.ipv6.conf.all.accept_redirects = 0
 EOF
-    
-    # Try to apply, handle container limitations gracefully
     if sysctl -p "$SYSCTL_CONF" &>/dev/null; then
         msg_ok "Optimisations sysctl appliquées"
     else
@@ -234,13 +231,9 @@ EOF
 
 # --- Unbound Logic & Calculation ---
 
-# Helper to find nearest power of 2 (round down)
 get_power_of_two() {
-    local n=$1
-    local p=1
-    while (( p * 2 <= n )); do
-        (( p *= 2 ))
-    done
+    local n=$1 p=1
+    while (( p * 2 <= n )); do (( p *= 2 )); done
     echo "$p"
 }
 
@@ -251,124 +244,82 @@ get_system_resources() {
 
 calculate_optimized_settings() {
     get_system_resources
-    
-    # Allow manual override in interactive mode
+
     if [[ "$INTERACTIVE" == "true" ]]; then
-        if ! whiptail --title "Ressources Système" --yesno "Détecté : ${CPU_CORES} CPU, ${RAM_MB} MB RAM.\n\nUtiliser ces valeurs pour l'auto-configuration ?" 10 60; then
-             # Manual Input with Cancel handling + validation
-             local user_cpu
-             if user_cpu=$(whiptail --inputbox "Nombre de coeurs CPU :" 8 40 "$CPU_CORES" 3>&1 1>&2 2>&3); then
-                 if [[ "$user_cpu" =~ ^[0-9]+$ ]] && (( user_cpu > 0 && user_cpu <= 256 )); then
-                     CPU_CORES=$user_cpu
-                 else
-                     msg_warn "Valeur CPU invalide ('$user_cpu'). Utilisation de la valeur détectée ($CPU_CORES)."
-                 fi
-             else
-                 msg_warn "Saisie annulée. Utilisation de la valeur détectée ($CPU_CORES)."
-             fi
-             
-             local user_ram
-             if user_ram=$(whiptail --inputbox "RAM en MB :" 8 40 "$RAM_MB" 3>&1 1>&2 2>&3); then
-                 if [[ "$user_ram" =~ ^[0-9]+$ ]] && (( user_ram >= 64 && user_ram <= 1048576 )); then
-                     RAM_MB=$user_ram
-                 else
-                     msg_warn "Valeur RAM invalide ('$user_ram'). Utilisation de la valeur détectée ($RAM_MB)."
-                 fi
-             else
-                 msg_warn "Saisie annulée. Utilisation de la valeur détectée ($RAM_MB)."
-             fi
+        if ! whiptail --title "Ressources Système" --yesno \
+            "Détecté : ${CPU_CORES} CPU, ${RAM_MB} MB RAM.\n\nUtiliser ces valeurs pour l'auto-configuration ?" 10 60; then
+            local user_cpu user_ram
+            if user_cpu=$(whiptail --inputbox "Nombre de coeurs CPU :" 8 40 "$CPU_CORES" 3>&1 1>&2 2>&3); then
+                if [[ "$user_cpu" =~ ^[0-9]+$ ]] && (( user_cpu > 0 && user_cpu <= 256 )); then
+                    CPU_CORES=$user_cpu
+                else
+                    msg_warn "Valeur CPU invalide. Valeur détectée conservée ($CPU_CORES)."
+                fi
+            fi
+            if user_ram=$(whiptail --inputbox "RAM en MB :" 8 40 "$RAM_MB" 3>&1 1>&2 2>&3); then
+                if [[ "$user_ram" =~ ^[0-9]+$ ]] && (( user_ram >= 64 && user_ram <= 1048576 )); then
+                    RAM_MB=$user_ram
+                else
+                    msg_warn "Valeur RAM invalide. Valeur détectée conservée ($RAM_MB)."
+                fi
+            fi
         fi
     fi
 
-    # Unbound Threading & Slabs (Performance Critical)
-    # Docs: Slabs reduce lock contention. Must be power of 2. Close to num_cpus is ideal.
     NUM_THREADS=$CPU_CORES
-    
-    # Calculate Slabs: Power of 2, closest to threads but max 8-16 usually sufficient
     if (( CPU_CORES == 1 )); then
-        CACHE_SLABS=1 # Special case for single core to save memory
+        CACHE_SLABS=1
         NUM_THREADS=1
     else
-        # Find nearest power of 2 (e.g., 6 cores -> 4 slabs)
         CACHE_SLABS=$(get_power_of_two "$CPU_CORES")
-        # Ensure at least 2 slabs if >1 core
         (( CACHE_SLABS < 2 )) && CACHE_SLABS=2
     fi
 
-    # Memory Allocation Logic (Tiered)
     if (( RAM_MB < 512 )); then
-        # Micro Instance
-        RRSET_CACHE_SIZE="16m"
-        MSG_CACHE_SIZE="8m"
-        SO_RCVBUF="1m"
-        SO_SNDBUF="1m"
-        INFRA_HOSTS=200
-        OUTGOING_RANGE=512
-        QUERIES_PER_THREAD=512
-        NEG_CACHE_SIZE="1m"
+        RRSET_CACHE_SIZE="16m";  MSG_CACHE_SIZE="8m";   SO_RCVBUF="1m"; SO_SNDBUF="1m"
+        INFRA_HOSTS=200;         OUTGOING_RANGE=512;    QUERIES_PER_THREAD=512; NEG_CACHE_SIZE="1m"
     elif (( RAM_MB < 1024 )); then
-        # Small (Pi 4 / Standard LXC)
-        RRSET_CACHE_SIZE="64m"
-        MSG_CACHE_SIZE="32m"
-        SO_RCVBUF="2m"
-        SO_SNDBUF="2m"
-        INFRA_HOSTS=10000
-        OUTGOING_RANGE=2048
-        QUERIES_PER_THREAD=1024
-        NEG_CACHE_SIZE="4m"
+        RRSET_CACHE_SIZE="64m";  MSG_CACHE_SIZE="32m";  SO_RCVBUF="2m"; SO_SNDBUF="2m"
+        INFRA_HOSTS=10000;       OUTGOING_RANGE=2048;   QUERIES_PER_THREAD=1024; NEG_CACHE_SIZE="4m"
     elif (( RAM_MB < 4096 )); then
-        # Medium/High (Common Server)
-        RRSET_CACHE_SIZE="256m"
-        MSG_CACHE_SIZE="128m"
-        SO_RCVBUF="4m"
-        SO_SNDBUF="4m"
-        INFRA_HOSTS=50000
-        OUTGOING_RANGE=8192
-        QUERIES_PER_THREAD=4096
-        NEG_CACHE_SIZE="32m"
+        RRSET_CACHE_SIZE="256m"; MSG_CACHE_SIZE="128m"; SO_RCVBUF="4m"; SO_SNDBUF="4m"
+        INFRA_HOSTS=50000;       OUTGOING_RANGE=8192;   QUERIES_PER_THREAD=4096; NEG_CACHE_SIZE="32m"
     else
-        # Premium/Dedibox (> 4GB)
-        RRSET_CACHE_SIZE="512m"
-        MSG_CACHE_SIZE="256m"
-        SO_RCVBUF="8m"
-        SO_SNDBUF="8m"
-        INFRA_HOSTS=100000
-        OUTGOING_RANGE=8192
-        QUERIES_PER_THREAD=8192
-        NEG_CACHE_SIZE="64m"
+        RRSET_CACHE_SIZE="512m"; MSG_CACHE_SIZE="256m"; SO_RCVBUF="8m"; SO_SNDBUF="8m"
+        INFRA_HOSTS=100000;      OUTGOING_RANGE=8192;   QUERIES_PER_THREAD=8192; NEG_CACHE_SIZE="64m"
     fi
 }
 
 install_unbound() {
     if ! dpkg -l unbound 2>/dev/null | grep -q "^ii "; then
         msg_info "Installation du paquet Unbound"
-        apt-get install -y --no-install-recommends unbound ca-certificates dnsutils &>/dev/null
+        run_cmd apt-get install -y --no-install-recommends unbound ca-certificates dnsutils &>/dev/null
         msg_ok "Unbound installé"
     else
         msg_ok "Paquet Unbound déjà présent"
     fi
 
-    # Disable systemd-resolved if conflict
-    if systemctl is-active --quiet systemd-resolved; then
-         if ss -tulnp | grep -E ':(53|5353)\s' | grep -q 'systemd-resolve'; then
+    # Désactiver systemd-resolved si conflit sur port 53
+    if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+        if ss -tulnp | grep -E ':(53|5353)\s' | grep -q 'systemd-resolve'; then
             msg_info "Désactivation de systemd-resolved (conflit port 53)"
-            systemctl disable --now systemd-resolved.service &>/dev/null || true
-            rm -f /etc/resolv.conf
+            run_cmd systemctl disable --now systemd-resolved.service &>/dev/null || true
+            run_cmd rm -f /etc/resolv.conf
             msg_ok "systemd-resolved désactivé"
-         fi
+        fi
     fi
 
-    # Generate Config
     calculate_optimized_settings
-    
-    # Backup
+
+    # Backup config existante
     if [[ -f "/etc/unbound/unbound.conf" ]]; then
-        mv "/etc/unbound/unbound.conf" "/etc/unbound/unbound.conf.backup.$(date +%s)"
+        run_cmd mv "/etc/unbound/unbound.conf" "/etc/unbound/unbound.conf.backup.$(date +%s)"
     fi
 
     msg_info "Génération de la configuration Unbound (Threads: $NUM_THREADS, Slabs: $CACHE_SLABS)"
-    
-    cat > /etc/unbound/unbound.conf <<EOF
+
+    if [[ "$DRY_RUN" != "true" ]]; then
+        cat > /etc/unbound/unbound.conf <<EOF
 server:
     verbosity: 1
     interface: 127.0.0.1
@@ -376,34 +327,28 @@ server:
     do-ip4: yes
     do-udp: yes
     do-tcp: yes
-    
-    # --- Performance Tuning (Context7 Optimized) ---
+
+    # --- Performance Tuning ---
     num-threads: ${NUM_THREADS}
-    
-    # Slabs (Power of 2 to reduce lock contention)
     msg-cache-slabs: ${CACHE_SLABS}
     rrset-cache-slabs: ${CACHE_SLABS}
     infra-cache-slabs: ${CACHE_SLABS}
     key-cache-slabs: ${CACHE_SLABS}
-    
-    # Cache Sizes
     rrset-cache-size: ${RRSET_CACHE_SIZE}
     msg-cache-size: ${MSG_CACHE_SIZE}
     neg-cache-size: ${NEG_CACHE_SIZE}
-    
-    # Network Buffers
+
+    # --- Réseau ---
     so-reuseport: yes
     so-rcvbuf: ${SO_RCVBUF}
     so-sndbuf: ${SO_SNDBUF}
     edns-buffer-size: 1232
     max-udp-size: 1232
-    
-    # Limits
     outgoing-range: ${OUTGOING_RANGE}
     num-queries-per-thread: ${QUERIES_PER_THREAD}
     infra-cache-numhosts: ${INFRA_HOSTS}
-    
-    # Privacy & Security
+
+    # --- Sécurité & Vie privée ---
     hide-identity: yes
     hide-version: yes
     harden-glue: yes
@@ -413,14 +358,13 @@ server:
     private-address: 192.168.0.0/16
     private-address: 10.0.0.0/8
     private-address: 172.16.0.0/12
-    
-    # Prefetching
+
+    # --- Préchargement ---
     prefetch: yes
     prefetch-key: yes
     serve-expired: yes
     serve-expired-ttl: 86400
 
-    # Certs
     tls-cert-bundle: "/etc/ssl/certs/ca-certificates.crt"
 
 forward-zone:
@@ -437,34 +381,34 @@ remote-control:
     control-key-file: "/etc/unbound/unbound_control.key"
     control-cert-file: "/etc/unbound/unbound_control.pem"
 EOF
+    fi
 
-    # Root Hints (téléchargement en arrière-plan pendant la génération des clés)
+    # Root hints (téléchargement en arrière-plan)
     mkdir -p /usr/share/dns
     wget -q -O /usr/share/dns/root.hints https://www.internic.net/domain/named.cache 2>/dev/null &
     local _root_hints_pid=$!
 
-    # Setup Control Keys
-    if [[ ! -f "/etc/unbound/unbound_server.key" ]]; then
+    if [[ ! -f "/etc/unbound/unbound_server.key" ]] && [[ "$DRY_RUN" != "true" ]]; then
         msg_info "Génération des clés de contrôle Unbound"
         unbound-control-setup &>/dev/null || true
     fi
-    
-    # Fix Permissions (Critical for functionality)
-    chown -R unbound:unbound /etc/unbound
-    chmod 755 /etc/unbound
-    chmod 640 /etc/unbound/unbound_control.*
 
-    # Attendre fin du téléchargement root hints
+    if [[ "$DRY_RUN" != "true" ]]; then
+        chown -R unbound:unbound /etc/unbound
+        chmod 755 /etc/unbound
+        chmod 640 /etc/unbound/unbound_control.* 2>/dev/null || true
+    fi
+
     wait "${_root_hints_pid:-}" 2>/dev/null || true
 
-    # Check & Start
+    if [[ "$DRY_RUN" == "true" ]]; then
+        msg_ok "[DRY-RUN] Configuration Unbound simulée"
+        return 0
+    fi
+
     if unbound-checkconf &>/dev/null; then
-        # Safe restart with health check if available
         if type restart_service_safely &>/dev/null; then
-            restart_service_safely unbound 30 || {
-                msg_error "Échec redémarrage sécurisé Unbound"
-                exit 1
-            }
+            restart_service_safely unbound 30 || { msg_error "Échec redémarrage sécurisé Unbound"; exit 1; }
         else
             systemctl restart unbound
             systemctl enable unbound &>/dev/null
@@ -496,6 +440,7 @@ get_upstream_forward_lines() {
             echo "    forward-addr: 94.140.15.15@853#dns.adguard.com"
             ;;
         *)
+            msg_warn "Upstream '$SELECTED_UPSTREAM' non reconnu, fallback Cloudflare"
             echo "forward-addr: 1.1.1.1@853#cloudflare-dns.com"
             echo "    forward-addr: 1.0.0.1@853#cloudflare-dns.com"
             ;;
@@ -505,162 +450,144 @@ get_upstream_forward_lines() {
 # --- AdGuard Home Logic ---
 
 configure_adguard_upstream() {
-    if [[ ! -f "$AGH_YAML" ]]; then
-        return 0
-    fi
+    [[ ! -f "$AGH_YAML" ]] && return 0
 
     msg_info "Vérification de la configuration AdGuard Home..."
-    
-    # Check if already using Unbound
+
+    # Idempotent: ne pas reconfigurer si déjà correct
     if grep -q "127.0.0.1:${UNBOUND_PORT}" "$AGH_YAML"; then
-        msg_ok "AdGuard Home utilise déjà Unbound"
+        msg_ok "AdGuard Home utilise déjà Unbound (idempotent)"
         return 0
     fi
 
-    msg_info "Configuration d'AdGuard Home pour utiliser Unbound (Optimisation)"
-    
-    # Backup avec fonction commune si disponible
+    msg_info "Configuration d'AdGuard Home pour utiliser Unbound"
+
     if type create_backup &>/dev/null; then
         create_backup "$AGH_YAML" || true
     else
         cp "$AGH_YAML" "${AGH_YAML}.backup.$(date +%s)"
     fi
-    
-    # Modify YAML (Python method preferred for safety)
-    if command -v python3 &>/dev/null; then
-        python3 <<PYTHON
-import yaml
-import sys
 
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "  [DRY-RUN] Mise à jour upstream dans $AGH_YAML"
+        return 0
+    fi
+
+    if command -v python3 &>/dev/null; then
+        python3 - <<PYTHON
+import yaml, sys
 try:
     with open("$AGH_YAML", 'r') as f:
-        config = yaml.safe_load(f)
-    
-    if 'dns' not in config:
-        config['dns'] = {}
-    
-    # Set Unbound as unique upstream
-    config['dns']['upstream_dns'] = ['127.0.0.1:${UNBOUND_PORT}']
-    
-    # Examples for bootstrap
+        config = yaml.safe_load(f) or {}
+    config.setdefault('dns', {})
+    config['dns']['upstream_dns']  = ['127.0.0.1:${UNBOUND_PORT}']
     config['dns']['bootstrap_dns'] = ['1.1.1.1', '9.9.9.9']
-    
     with open("$AGH_YAML", 'w') as f:
         yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
-    print("OK")
+    print('OK')
 except Exception as e:
+    print(f'ERREUR: {e}', file=sys.stderr)
     sys.exit(1)
 PYTHON
     else
-        # Fallback SED
         sed -i "s|^  - https://dns10.quad9.net/dns-query|  - 127.0.0.1:${UNBOUND_PORT}|" "$AGH_YAML" 2>/dev/null || true
     fi
-    
+
     systemctl restart AdGuardHome
     msg_ok "AdGuard Home reconfiguré pour utiliser Unbound"
 }
 
 install_adguard_home() {
     if [[ -f "$AGH_BINARY" ]]; then
-         msg_info "AdGuard Home déjà installé"
-         # Even if installed, we want to ensure config is optimized
-         configure_adguard_upstream
-         return 0
-    fi
-    
-    # Vérification espace disque (150 MB minimum)
-    if type check_disk_space &>/dev/null; then
-        check_disk_space /opt 150 || { msg_error "Espace disque insuffisant (150 MB requis dans /opt)"; return 1; }
+        msg_ok "AdGuard Home déjà installé (idempotent)"
+        configure_adguard_upstream
+        return 0
     fi
 
-    msg_info "Installation AdGuard Home..."
-    
+    if type check_disk_space &>/dev/null; then
+        check_disk_space /opt 150 || { msg_error "Espace disque insuffisant (150 MB requis)"; return 1; }
+    fi
+
+    msg_info "Détection architecture..."
+    local ARCH AGH_ARCH
     ARCH=$(uname -m)
     case $ARCH in
-        x86_64) AGH_ARCH="amd64" ;;
-        aarch64) AGH_ARCH="arm64" ;;
-        armv7l) AGH_ARCH="armv7" ;;
-        *) msg_error "Arch $ARCH non supportée"; exit 1 ;;
+        x86_64)  AGH_ARCH="amd64"  ;;
+        aarch64) AGH_ARCH="arm64"  ;;
+        armv7l)  AGH_ARCH="armv7"  ;;
+        *) msg_error "Architecture non supportée: $ARCH"; exit 1 ;;
     esac
-    
-    # Fetch latest version with retry
+
+    msg_info "Récupération de la dernière version AdGuard Home..."
+    local LATEST_VER
     if type fetch_json_api &>/dev/null; then
         LATEST_VER=$(fetch_json_api "https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest" | jq -r '.tag_name')
     else
         LATEST_VER=$(curl -fsSL https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest | jq -r '.tag_name')
     fi
-    
-    if [[ -z "$LATEST_VER" ]]; then
-        msg_error "Impossible de trouver la dernière version"
+
+    if [[ -z "$LATEST_VER" || "$LATEST_VER" == "null" ]]; then
+        msg_error "Impossible de trouver la dernière version AdGuard Home"
         exit 1
     fi
-    
+
     local url="https://github.com/AdguardTeam/AdGuardHome/releases/download/${LATEST_VER}/AdGuardHome_linux_${AGH_ARCH}.tar.gz"
-    
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        msg_ok "[DRY-RUN] Téléchargement simulé: $url"
+        return 0
+    fi
+
     mkdir -p /tmp/agh_install
-    
-    # Download with retry logic
     if type download_with_retry &>/dev/null; then
-        if ! download_with_retry "$url" "/tmp/agh_install/AGH.tar.gz" 3; then
-            msg_error "Échec téléchargement AdGuard Home après 3 tentatives"
-            return 1
-        fi
+        download_with_retry "$url" "/tmp/agh_install/AGH.tar.gz" 3 || {
+            msg_error "Échec téléchargement AdGuard Home"; return 1
+        }
     else
         wget -qO /tmp/agh_install/AGH.tar.gz "$url"
     fi
+
     tar -xzf /tmp/agh_install/AGH.tar.gz -C /tmp/agh_install
-    
     mkdir -p "$AGH_INSTALL_DIR"
     mv /tmp/agh_install/AdGuardHome/AdGuardHome "$AGH_BINARY"
     chmod +x "$AGH_BINARY"
-    
-    # Service
+
     "$AGH_BINARY" -s install &>/dev/null || true
     systemctl start AdGuardHome
-    
-    # Wait for YAML (active wait instead of fixed sleep)
-    msg_info "Attente de l'initialisation d'AdGuard Home..."
+
+    msg_info "Attente initialisation AdGuard Home..."
     if wait_for_file "$AGH_YAML" 30; then
-        msg_ok "Fichier YAML initialisé"
-    fi
-    
-    if [[ -f "$AGH_YAML" ]]; then
         configure_adguard_upstream
-        msg_ok "AdGuard Home installé et lié à Unbound"
-        
-        # Health check post-installation si disponible
+        msg_ok "AdGuard Home v${LATEST_VER} installé et lié à Unbound"
         if type check_adguard_health &>/dev/null; then
-            msg_info "Vérification santé post-installation..."
-            if check_adguard_health &>/dev/null; then
-                msg_ok "Health check AdGuard: OK ✓"
-            else
-                msg_warn "Health check AdGuard: voir logs pour détails"
-            fi
+            msg_info "Health check post-installation..."
+            check_adguard_health &>/dev/null && msg_ok "Health check: OK" || msg_warn "Health check: voir logs"
         fi
     else
-        msg_warn "Fichier YAML non trouvé, config manuelle requise"
+        msg_warn "Fichier YAML non trouvé, configuration manuelle requise"
     fi
 }
 
 # --- Uninstall Logic ---
 
 uninstall_all() {
-    if ! whiptail --title "Désinstallation" --yesno "Voulez-vous vraiment désinstaller AdGuard Home et Unbound ?\nCela supprimera les fichiers de configuration et les données." 10 60; then
+    if ! whiptail --title "Désinstallation" --yesno \
+        "Voulez-vous vraiment désinstaller AdGuard Home et Unbound ?\nLes fichiers de configuration seront supprimés." 10 60; then
         return 0
     fi
-    
+
     msg_info "Suppression AdGuard Home..."
     systemctl stop AdGuardHome &>/dev/null || true
-    "$AGH_BINARY" -s uninstall &>/dev/null || true
+    [[ -x "$AGH_BINARY" ]] && "$AGH_BINARY" -s uninstall &>/dev/null || true
     rm -rf "$AGH_INSTALL_DIR"
     msg_ok "AdGuard Home supprimé"
-    
+
     msg_info "Suppression Unbound..."
     systemctl stop unbound &>/dev/null || true
     apt-get remove --purge -y unbound &>/dev/null
     rm -rf /etc/unbound
     msg_ok "Unbound supprimé"
-    
+
     msg_ok "Désinstallation terminée"
 }
 
@@ -675,12 +602,11 @@ select_upstream() {
         "3" "Google      8.8.8.8   (Fiable, Universel)" \
         "4" "AdGuard DNS 94.140.x  (Anti-pub natif)" \
         3>&1 1>&2 2>&3) || return 0
-        
     case $choice in
         1) SELECTED_UPSTREAM="cloudflare" ;;
-        2) SELECTED_UPSTREAM="quad9" ;;
-        3) SELECTED_UPSTREAM="google" ;;
-        4) SELECTED_UPSTREAM="adguard" ;;
+        2) SELECTED_UPSTREAM="quad9"      ;;
+        3) SELECTED_UPSTREAM="google"     ;;
+        4) SELECTED_UPSTREAM="adguard"    ;;
     esac
     log "Upstream sélectionné: ${SELECTED_UPSTREAM}"
 }
@@ -689,21 +615,18 @@ update_script() {
     msg_info "Vérification de la mise à jour du script..."
     local remote_url="https://raw.githubusercontent.com/nickdesi/unbound-adguard-installer/main/install_unbound_interactive.sh"
     local local_file="$0"
-    
+
     if curl -fsSL "$remote_url" -o "${local_file}.tmp"; then
-        # Compare versions before overwriting
         local remote_version
         remote_version=$(grep -m1 'readonly SCRIPT_VERSION=' "${local_file}.tmp" | cut -d'"' -f2)
-        
-        if [[ -n "$remote_version" ]] && [[ "$remote_version" == "$SCRIPT_VERSION" ]]; then
+        if [[ -n "$remote_version" && "$remote_version" == "$SCRIPT_VERSION" ]]; then
             msg_ok "Déjà à jour (v${SCRIPT_VERSION})"
             rm -f "${local_file}.tmp"
             return 0
         fi
-        
         chmod +x "${local_file}.tmp"
         mv "${local_file}.tmp" "$local_file"
-        msg_ok "Script mis à jour : v${SCRIPT_VERSION} → v${remote_version:-inconnue}. Relancez-le."
+        msg_ok "Mis à jour: v${SCRIPT_VERSION} → v${remote_version:-inconnue}. Relancez le script."
         exit 0
     else
         msg_error "Échec du téléchargement de la mise à jour."
@@ -719,6 +642,7 @@ show_menu() {
         ub_status=$(systemctl is-active unbound 2>/dev/null || echo "inactif")
         agh_status=$(systemctl is-active AdGuardHome 2>/dev/null || echo "inactif")
         local desc="Unbound: ${ub_status}  |  AdGuard: ${agh_status}  |  Upstream: ${SELECTED_UPSTREAM}"
+        [[ "$DRY_RUN" == "true" ]] && desc="[DRY-RUN] ${desc}"
 
         choice=$(whiptail --title "Menu (v${SCRIPT_VERSION})" \
             --menu "${desc}" 20 65 8 \
@@ -746,7 +670,7 @@ show_menu() {
                 local local_ip; local_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
                 STEP_TOTAL=0; STEP_CURRENT=0
                 if type run_full_health_check &>/dev/null && run_full_health_check &>/dev/null; then
-                    whiptail --msgbox "✓ Installation réussie et vérifiée !\n\nURL: http://${local_ip}:3000\n\nTous les tests passés avec succès." 12 60
+                    whiptail --msgbox "✓ Installation réussie et vérifiée !\n\nURL: http://${local_ip}:3000\n\nTous les tests passés." 12 60
                 else
                     whiptail --msgbox "Installation terminée.\n\nURL: http://${local_ip}:3000\n\nConsultez: ${LOG_FILE}" 12 60
                 fi
@@ -761,9 +685,7 @@ show_menu() {
                 if type run_full_health_check &>/dev/null; then
                     local hc_file; hc_file=$(mktemp)
                     run_full_health_check 2>&1 | tee "$hc_file" >/dev/null
-                    if type benchmark_dns_performance &>/dev/null; then
-                        benchmark_dns_performance 100 2>&1 | tee -a "$hc_file" >/dev/null
-                    fi
+                    type benchmark_dns_performance &>/dev/null && benchmark_dns_performance 100 2>&1 | tee -a "$hc_file" >/dev/null
                     whiptail --title "Diagnostics (v${SCRIPT_VERSION})" --scrolltext --textbox "$hc_file" 24 72
                     rm -f "$hc_file"
                 else
@@ -788,15 +710,9 @@ show_menu() {
                 apt-get update -qq &>/dev/null && apt-get upgrade -y -qq &>/dev/null
                 msg_ok "Système à jour"
                 ;;
-            6)
-                update_script
-                ;;
-            7)
-                uninstall_all
-                ;;
-            8)
-                exit 0
-                ;;
+            6) update_script  ;;
+            7) uninstall_all  ;;
+            8) exit 0          ;;
         esac
     done
 }
@@ -804,7 +720,7 @@ show_menu() {
 # --- Usage / Help ---
 
 show_help() {
-    echo "Usage: $0 [OPTION]"
+    echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
     echo "  --install            Installation complète (AdGuard Home + Unbound)"
@@ -813,32 +729,40 @@ show_help() {
     echo "  --update             Mettre à jour ce script depuis GitHub"
     echo "  --uninstall          Désinstaller AdGuard Home et Unbound"
     echo "  --health             Exécuter le health check complet"
-    echo "  --stats              Afficher les stats Unbound en temps réel"
-    echo "  --upstream <nom>     Forcer l'upstream (cloudflare|quad9|google|adguard)"
+    echo "  --stats              Afficher les stats Unbound"
+    echo "  --upstream <nom>     Forcer l'upstream (${VALID_UPSTREAMS[*]})"
+    echo "  --dry-run            Simuler les actions sans modifier le système"
     echo "  --help               Afficher cette aide"
     echo ""
-    echo "Sans option, le script affiche un menu interactif."
+    echo "Sans option: menu interactif."
     exit 0
 }
 
 # --- Entry Point ---
 
 main() {
-    # Handle --help before root check (so non-root users can see help)
-    if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
-        show_help
-    fi
-    
+    [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && show_help
+
+    # --dry-run peut être combiné avec les autres flags
+    local args=()
+    for arg in "$@"; do
+        [[ "$arg" == "--dry-run" ]] && DRY_RUN=true || args+=("$arg")
+    done
+    set -- "${args[@]}"
+
+    [[ "$DRY_RUN" == "true" ]] && msg_warn "Mode DRY-RUN actif — aucune modification système ne sera effectuée."
+
     check_root
     check_os
     check_dependencies
 
-    # Support --upstream <name> as optional first argument
-    if [[ "${1:-}" == "--upstream" ]] && [[ -n "${2:-}" ]]; then
+    # --upstream <name> optionnel
+    if [[ "${1:-}" == "--upstream" && -n "${2:-}" ]]; then
+        validate_upstream "$2" || exit 1
         SELECTED_UPSTREAM="$2"
         shift 2
     fi
-    
+
     case "${1:-}" in
         --install)
             INTERACTIVE=false
@@ -865,18 +789,13 @@ main() {
             if type run_full_health_check &>/dev/null; then
                 run_full_health_check
             else
-                msg_error "Module health_checks non disponible"
-                exit 1
+                msg_error "Module health_checks non disponible"; exit 1
             fi
             ;;
         --stats)
             header_info
-            if command -v unbound-control &>/dev/null; then
-                unbound-control stats_noreset
-            else
-                msg_error "unbound-control non disponible"
-                exit 1
-            fi
+            command -v unbound-control &>/dev/null || { msg_error "unbound-control non disponible"; exit 1; }
+            unbound-control stats_noreset
             ;;
         --update)
             header_info
