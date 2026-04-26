@@ -7,8 +7,6 @@ Ce script Bash installe et configure **AdGuard Home** et **Unbound** comme solut
 
 Inspiré par le style des [Proxmox VE Helper-Scripts](https://tteck.github.io/Proxmox/), il propose une **interface interactive** (menu Whiptail) et une configuration **ultra-optimisée** basée sur les ressources de votre système.
 
-![Screenshot](https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/images/logo.png)
-
 ## 🏗️ Architecture DNS
 
 ```mermaid
