@@ -7,7 +7,7 @@
 # Installe, configure et met à jour AdGuard Home + Unbound sur Debian/Ubuntu LXC.
 # ==========================================================================
 # Auteur: Nicolas
-# Version: 3.4.0
+# Version: 3.4.1
 # Licence: MIT
 # ==========================================================================
 
@@ -16,13 +16,26 @@ set -Eeuo pipefail
 trap cleanup EXIT
 trap 'error_handler $? $LINENO $BASH_COMMAND' ERR
 
-# --- Load Shared Libraries ---
+# --- Load Shared Libraries (fail-fast) ---
+# common.sh est OBLIGATOIRE — le script ne peut pas fonctionner sans.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[[ -f "${SCRIPT_DIR}/lib/common.sh" ]]       && source "${SCRIPT_DIR}/lib/common.sh"
-[[ -f "${SCRIPT_DIR}/lib/health_checks.sh" ]] && source "${SCRIPT_DIR}/lib/health_checks.sh"
+
+if [[ ! -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
+    echo "FATAL: lib/common.sh introuvable dans ${SCRIPT_DIR}/lib/" >&2
+    echo "Assurez-vous de cloner le repo complet et non de télécharger le script seul." >&2
+    exit 1
+fi
+source "${SCRIPT_DIR}/lib/common.sh"
+
+# health_checks.sh est optionnel (dégradation gracieuse)
+HEALTH_CHECKS_AVAILABLE=false
+if [[ -f "${SCRIPT_DIR}/lib/health_checks.sh" ]]; then
+    source "${SCRIPT_DIR}/lib/health_checks.sh"
+    HEALTH_CHECKS_AVAILABLE=true
+fi
 
 # --- Global Constants ---
-readonly SCRIPT_VERSION="3.4.0"
+readonly SCRIPT_VERSION="3.4.1"
 readonly LOG_FILE="/var/log/adguard-unbound-installer.log"
 readonly UNBOUND_PORT=5335
 readonly AGH_INSTALL_DIR="/opt/AdGuardHome"
@@ -66,7 +79,6 @@ error_handler() {
 
 # --- Dry-run wrapper ---
 # Usage: run_cmd <cmd> [args...]
-# En mode dry-run, affiche la commande sans l'exécuter.
 run_cmd() {
     if [[ "$DRY_RUN" == "true" ]]; then
         echo "  [DRY-RUN] $*"
@@ -191,7 +203,6 @@ check_dependencies() {
 
 # --- Upstream Validation ---
 
-# Vérifie que SELECTED_UPSTREAM est une valeur connue
 validate_upstream() {
     local up="$1"
     local valid
@@ -299,7 +310,6 @@ install_unbound() {
         msg_ok "Paquet Unbound déjà présent"
     fi
 
-    # Désactiver systemd-resolved si conflit sur port 53
     if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
         if ss -tulnp | grep -E ':(53|5353)\s' | grep -q 'systemd-resolve'; then
             msg_info "Désactivation de systemd-resolved (conflit port 53)"
@@ -311,7 +321,6 @@ install_unbound() {
 
     calculate_optimized_settings
 
-    # Backup config existante
     if [[ -f "/etc/unbound/unbound.conf" ]]; then
         run_cmd mv "/etc/unbound/unbound.conf" "/etc/unbound/unbound.conf.backup.$(date +%s)"
     fi
@@ -383,7 +392,6 @@ remote-control:
 EOF
     fi
 
-    # Root hints (téléchargement en arrière-plan)
     mkdir -p /usr/share/dns
     wget -q -O /usr/share/dns/root.hints https://www.internic.net/domain/named.cache 2>/dev/null &
     local _root_hints_pid=$!
@@ -454,7 +462,6 @@ configure_adguard_upstream() {
 
     msg_info "Vérification de la configuration AdGuard Home..."
 
-    # Idempotent: ne pas reconfigurer si déjà correct
     if grep -q "127.0.0.1:${UNBOUND_PORT}" "$AGH_YAML"; then
         msg_ok "AdGuard Home utilise déjà Unbound (idempotent)"
         return 0
@@ -559,7 +566,7 @@ install_adguard_home() {
     if wait_for_file "$AGH_YAML" 30; then
         configure_adguard_upstream
         msg_ok "AdGuard Home v${LATEST_VER} installé et lié à Unbound"
-        if type check_adguard_health &>/dev/null; then
+        if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]]; then
             msg_info "Health check post-installation..."
             check_adguard_health &>/dev/null && msg_ok "Health check: OK" || msg_warn "Health check: voir logs"
         fi
@@ -669,7 +676,7 @@ show_menu() {
                 msg_step "Health check post-installation"
                 local local_ip; local_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
                 STEP_TOTAL=0; STEP_CURRENT=0
-                if type run_full_health_check &>/dev/null && run_full_health_check &>/dev/null; then
+                if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]] && run_full_health_check &>/dev/null; then
                     whiptail --msgbox "✓ Installation réussie et vérifiée !\n\nURL: http://${local_ip}:3000\n\nTous les tests passés." 12 60
                 else
                     whiptail --msgbox "Installation terminée.\n\nURL: http://${local_ip}:3000\n\nConsultez: ${LOG_FILE}" 12 60
@@ -682,14 +689,14 @@ show_menu() {
                 whiptail --msgbox "Reconfiguration appliquée avec succès." 8 55
                 ;;
             3)
-                if type run_full_health_check &>/dev/null; then
+                if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]]; then
                     local hc_file; hc_file=$(mktemp)
                     run_full_health_check 2>&1 | tee "$hc_file" >/dev/null
                     type benchmark_dns_performance &>/dev/null && benchmark_dns_performance 100 2>&1 | tee -a "$hc_file" >/dev/null
                     whiptail --title "Diagnostics (v${SCRIPT_VERSION})" --scrolltext --textbox "$hc_file" 24 72
                     rm -f "$hc_file"
                 else
-                    msg_warn "Module health_checks non chargé"
+                    whiptail --msgbox "Module health_checks non disponible.\nAssurez-vous que lib/health_checks.sh est présent." 8 60
                 fi
                 ;;
             4)
@@ -743,7 +750,6 @@ show_help() {
 main() {
     [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && show_help
 
-    # --dry-run peut être combiné avec les autres flags
     local args=()
     for arg in "$@"; do
         [[ "$arg" == "--dry-run" ]] && DRY_RUN=true || args+=("$arg")
@@ -756,7 +762,6 @@ main() {
     check_os
     check_dependencies
 
-    # --upstream <name> optionnel
     if [[ "${1:-}" == "--upstream" && -n "${2:-}" ]]; then
         validate_upstream "$2" || exit 1
         SELECTED_UPSTREAM="$2"
@@ -786,10 +791,11 @@ main() {
             ;;
         --health)
             header_info
-            if type run_full_health_check &>/dev/null; then
+            if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]]; then
                 run_full_health_check
             else
-                msg_error "Module health_checks non disponible"; exit 1
+                msg_error "Module health_checks non disponible (lib/health_checks.sh manquant)"
+                exit 1
             fi
             ;;
         --stats)
