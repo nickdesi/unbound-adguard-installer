@@ -36,25 +36,11 @@ fi
 
 # --- Global Constants ---
 readonly SCRIPT_VERSION="3.4.1"
-readonly LOG_FILE="/var/log/adguard-unbound-installer.log"
 readonly UNBOUND_PORT=5335
 readonly AGH_INSTALL_DIR="/opt/AdGuardHome"
 readonly AGH_BINARY="${AGH_INSTALL_DIR}/AdGuardHome"
 readonly AGH_YAML="${AGH_INSTALL_DIR}/AdGuardHome.yaml"
 readonly VALID_UPSTREAMS=("cloudflare" "quad9" "google" "adguard")
-
-# Colors
-readonly YW="\033[33m"
-readonly BL="\033[34m"
-readonly RD="\033[01;31m"
-readonly GN="\033[1;32m"
-readonly CL="\033[m"
-readonly BFR="\\r\\033[K"
-readonly HOLD="-"
-readonly CM="${GN}✓${CL}"
-readonly CROSS="${RD}✗${CL}"
-readonly INFO="${BL}ℹ${CL}"
-readonly WARN="${YW}⚠${CL}"
 
 # Global State Variables (mutable)
 INTERACTIVE=true
@@ -62,9 +48,6 @@ SELECTED_UPSTREAM="cloudflare"
 DRY_RUN=false
 CPU_CORES=1
 RAM_MB=512
-_OP_START=0
-STEP_CURRENT=0
-STEP_TOTAL=0
 
 # --- Error Handling & Cleanup ---
 
@@ -85,59 +68,6 @@ run_cmd() {
     else
         "$@"
     fi
-}
-
-# --- Logging & UI Functions ---
-
-wait_for_file() {
-    local file="$1" timeout="${2:-30}" elapsed=0
-    while [[ ! -f "$file" ]] && (( elapsed < timeout )); do
-        sleep 1; (( elapsed++ ))
-    done
-    [[ -f "$file" ]]
-}
-
-log() {
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
-}
-
-msg_info() {
-    local msg="$1"
-    _OP_START=$(date +%s%3N)
-    local step_prefix=""
-    (( STEP_TOTAL > 0 )) && step_prefix="${YW}[${STEP_CURRENT}/${STEP_TOTAL}]${CL} "
-    echo -ne " ${HOLD} ${step_prefix}${YW}${msg}...${CL}"
-    log "INFO: $msg"
-}
-
-msg_ok() {
-    local msg="$1" elapsed_str=""
-    if (( _OP_START > 0 )); then
-        local _now; _now=$(date +%s%3N)
-        local _ms=$(( _now - _OP_START ))
-        _OP_START=0
-        (( _ms >= 500 )) && elapsed_str=" ${YW}(${_ms}ms)${CL}"
-    fi
-    echo -e "${BFR} ${CM} ${GN}${msg}${CL}${elapsed_str}"
-    log "OK: $msg"
-}
-
-msg_error() {
-    local msg="$1"
-    echo -e "${BFR} ${CROSS} ${RD}${msg}${CL}" >&2
-    log "ERROR: $msg"
-}
-
-msg_warn() {
-    local msg="$1"
-    echo -e "${BFR} ${WARN} ${YW}${msg}${CL}"
-    log "WARN: $msg"
-}
-
-msg_step() {
-    (( ++STEP_CURRENT ))
-    echo -e "\n ${BL}━━ Étape ${STEP_CURRENT}/${STEP_TOTAL}: ${GN}$1${CL}"
-    log "STEP ${STEP_CURRENT}/${STEP_TOTAL}: $1"
 }
 
 header_info() {
@@ -393,7 +323,7 @@ EOF
     fi
 
     mkdir -p /usr/share/dns
-    wget -q -O /usr/share/dns/root.hints https://www.internic.net/domain/named.cache 2>/dev/null &
+    download_with_retry "https://www.internic.net/domain/named.cache" "/usr/share/dns/root.hints" 3 &
     local _root_hints_pid=$!
 
     if [[ ! -f "/etc/unbound/unbound_server.key" ]] && [[ "$DRY_RUN" != "true" ]]; then
@@ -415,13 +345,9 @@ EOF
     fi
 
     if unbound-checkconf &>/dev/null; then
-        if type restart_service_safely &>/dev/null; then
-            restart_service_safely unbound 30 || { msg_error "Échec redémarrage sécurisé Unbound"; exit 1; }
-        else
-            systemctl restart unbound
-            systemctl enable unbound &>/dev/null
-            msg_ok "Configuration Unbound valide et service démarré"
-        fi
+        systemctl enable unbound &>/dev/null
+        restart_service_safely unbound 30 || { msg_error "Échec redémarrage sécurisé Unbound"; exit 1; }
+        msg_ok "Configuration Unbound valide et service redémarré"
     else
         msg_error "Configuration Unbound invalide !"
         unbound-checkconf
@@ -469,11 +395,7 @@ configure_adguard_upstream() {
 
     msg_info "Configuration d'AdGuard Home pour utiliser Unbound"
 
-    if type create_backup &>/dev/null; then
-        create_backup "$AGH_YAML" || true
-    else
-        cp "$AGH_YAML" "${AGH_YAML}.backup.$(date +%s)"
-    fi
+    create_backup "$AGH_YAML" || true
 
     if [[ "$DRY_RUN" == "true" ]]; then
         echo "  [DRY-RUN] Mise à jour upstream dans $AGH_YAML"
@@ -497,10 +419,10 @@ except Exception as e:
     sys.exit(1)
 PYTHON
     else
-        sed -i "s|^  - https://dns10.quad9.net/dns-query|  - 127.0.0.1:${UNBOUND_PORT}|" "$AGH_YAML" 2>/dev/null || true
+        safe_sed "$AGH_YAML" "^  - https://dns10.quad9.net/dns-query" "  - 127.0.0.1:${UNBOUND_PORT}" || true
     fi
 
-    systemctl restart AdGuardHome
+    restart_service_safely AdGuardHome 30 || true
     msg_ok "AdGuard Home reconfiguré pour utiliser Unbound"
 }
 
@@ -511,9 +433,7 @@ install_adguard_home() {
         return 0
     fi
 
-    if type check_disk_space &>/dev/null; then
-        check_disk_space /opt 150 || { msg_error "Espace disque insuffisant (150 MB requis)"; return 1; }
-    fi
+    check_disk_space /opt 150 || { msg_error "Espace disque insuffisant (150 MB requis)"; return 1; }
 
     msg_info "Détection architecture..."
     local ARCH AGH_ARCH
@@ -527,11 +447,7 @@ install_adguard_home() {
 
     msg_info "Récupération de la dernière version AdGuard Home..."
     local LATEST_VER
-    if type fetch_json_api &>/dev/null; then
-        LATEST_VER=$(fetch_json_api "https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest" | jq -r '.tag_name')
-    else
-        LATEST_VER=$(curl -fsSL https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest | jq -r '.tag_name')
-    fi
+    LATEST_VER=$(fetch_json_api "https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest" | jq -r '.tag_name')
 
     if [[ -z "$LATEST_VER" || "$LATEST_VER" == "null" ]]; then
         msg_error "Impossible de trouver la dernière version AdGuard Home"
@@ -546,13 +462,9 @@ install_adguard_home() {
     fi
 
     mkdir -p /tmp/agh_install
-    if type download_with_retry &>/dev/null; then
-        download_with_retry "$url" "/tmp/agh_install/AGH.tar.gz" 3 || {
-            msg_error "Échec téléchargement AdGuard Home"; return 1
-        }
-    else
-        wget -qO /tmp/agh_install/AGH.tar.gz "$url"
-    fi
+    download_with_retry "$url" "/tmp/agh_install/AGH.tar.gz" 3 || {
+        msg_error "Échec téléchargement AdGuard Home"; return 1
+    }
 
     tar -xzf /tmp/agh_install/AGH.tar.gz -C /tmp/agh_install
     mkdir -p "$AGH_INSTALL_DIR"
@@ -754,7 +666,7 @@ main() {
     for arg in "$@"; do
         [[ "$arg" == "--dry-run" ]] && DRY_RUN=true || args+=("$arg")
     done
-    set -- "${args[@]}"
+    [[ ${#args[@]} -gt 0 ]] && set -- "${args[@]}" || set --
 
     [[ "$DRY_RUN" == "true" ]] && msg_warn "Mode DRY-RUN actif — aucune modification système ne sera effectuée."
 

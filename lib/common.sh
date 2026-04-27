@@ -11,6 +11,81 @@
 readonly _COMMON_LIB_LOADED=1
 
 # ==========================================================================
+# GLOBAL CONSTANTS & UI/LOGGING
+# ==========================================================================
+
+readonly LOG_FILE="/var/log/adguard-unbound-installer.log"
+
+# Colors
+readonly YW="\033[33m"
+readonly BL="\033[34m"
+readonly RD="\033[01;31m"
+readonly GN="\033[1;32m"
+readonly CL="\033[m"
+readonly BFR="\\r\\033[K"
+readonly HOLD="-"
+readonly CM="${GN}✓${CL}"
+readonly CROSS="${RD}✗${CL}"
+readonly INFO="${BL}ℹ${CL}"
+readonly WARN="${YW}⚠${CL}"
+
+# Global UI State
+_OP_START=0
+STEP_CURRENT=0
+STEP_TOTAL=0
+
+wait_for_file() {
+    local file="$1" timeout="${2:-30}" elapsed=0
+    while [[ ! -f "$file" ]] && (( elapsed < timeout )); do
+        sleep 1; (( elapsed++ ))
+    done
+    [[ -f "$file" ]]
+}
+
+log() {
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+msg_info() {
+    local msg="$1"
+    _OP_START=$(date +%s%3N)
+    local step_prefix=""
+    (( STEP_TOTAL > 0 )) && step_prefix="${YW}[${STEP_CURRENT}/${STEP_TOTAL}]${CL} "
+    echo -ne " ${HOLD} ${step_prefix}${YW}${msg}...${CL}"
+    log "INFO: $msg"
+}
+
+msg_ok() {
+    local msg="$1" elapsed_str=""
+    if (( _OP_START > 0 )); then
+        local _now; _now=$(date +%s%3N)
+        local _ms=$(( _now - _OP_START ))
+        _OP_START=0
+        (( _ms >= 500 )) && elapsed_str=" ${YW}(${_ms}ms)${CL}"
+    fi
+    echo -e "${BFR} ${CM} ${GN}${msg}${CL}${elapsed_str}"
+    log "OK: $msg"
+}
+
+msg_error() {
+    local msg="$1"
+    echo -e "${BFR} ${CROSS} ${RD}${msg}${CL}" >&2
+    log "ERROR: $msg"
+}
+
+msg_warn() {
+    local msg="$1"
+    echo -e "${BFR} ${WARN} ${YW}${msg}${CL}"
+    log "WARN: $msg"
+}
+
+msg_step() {
+    (( ++STEP_CURRENT ))
+    echo -e "\n ${BL}━━ Étape ${STEP_CURRENT}/${STEP_TOTAL}: ${GN}$1${CL}"
+    log "STEP ${STEP_CURRENT}/${STEP_TOTAL}: $1"
+}
+
+# ==========================================================================
 # NETWORK UTILITIES WITH RETRY LOGIC
 # ==========================================================================
 
