@@ -42,6 +42,8 @@ Le script analyse vos cœurs CPU et votre RAM pour calibrer Unbound automatiquem
 
 - **Threads & Slabs** : alignés sur le nombre de cœurs (puissance de 2) pour réduire la contention.
 - **Buffers UDP** : sysctl optimisés pour absorber les pics de trafic DNS.
+- **Cache basse latence** : `serve-expired`, préchargement, TTL minimum et cache NSEC agressif pour répondre plus vite aux requêtes répétées.
+- **Root hints économes** : rafraîchissement uniquement si nécessaire (cache 30 jours), pour éviter les appels réseau inutiles.
 
 ### 🛡️ Sécurité & Vie Privée
 
@@ -88,6 +90,7 @@ Options:
   --unbound-only       Installer/reconfigurer uniquement Unbound
   --health             Exécuter le health check complet
   --stats              Afficher les stats Unbound
+  --benchmark [n]      Tester les performances DNS (défaut: 300 requêtes)
   --update             Mettre à jour ce script depuis GitHub
   --uninstall          Désinstaller AdGuard Home et Unbound
   --upstream <nom>     Forcer l'upstream (cloudflare|quad9|google|adguard)
@@ -111,6 +114,9 @@ sudo ./install_unbound_interactive.sh --health
 
 # Stats live Unbound
 sudo ./install_unbound_interactive.sh --stats
+
+# Benchmark DNS rapide
+sudo ./install_unbound_interactive.sh --benchmark 500
 
 # Reconfigurer l'upstream sans tout réinstaller
 sudo ./install_unbound_interactive.sh --upstream cloudflare --repair

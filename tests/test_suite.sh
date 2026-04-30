@@ -203,7 +203,9 @@ test_system_requirements() {
     done
     
     # Check if /proc/meminfo exists
-    if [[ -f /proc/meminfo ]]; then
+    if [[ "$(uname -s)" != "Linux" ]]; then
+        skip "System info /proc/meminfo is Linux-only"
+    elif [[ -f /proc/meminfo ]]; then
         pass "System info available: /proc/meminfo"
     else
         fail "System info missing: /proc/meminfo"
@@ -213,6 +215,11 @@ test_system_requirements() {
 test_disk_space_check() {
     echo ""
     echo "=== Testing Disk Space Check ==="
+
+    if [[ "$(uname -s)" != "Linux" ]]; then
+        skip "Disk space check uses Linux df -BM semantics"
+        return 0
+    fi
     
     check_disk_space() {
         local path="$1"
@@ -290,6 +297,25 @@ test_atomic_write() {
     rm -f "$test_file"
 }
 
+test_performance_defaults() {
+    echo ""
+    echo "=== Testing Performance Defaults ==="
+
+    local script="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/install_unbound_interactive.sh"
+
+    if grep -q 'cache-min-ttl:' "$script" && grep -q 'serve-expired-client-timeout:' "$script"; then
+        pass "Unbound low-latency cache tuning present"
+    else
+        fail "Unbound low-latency cache tuning missing"
+    fi
+
+    if grep -q -- '--benchmark' "$script"; then
+        pass "Benchmark CLI option present"
+    else
+        fail "Benchmark CLI option missing"
+    fi
+}
+
 # ==========================================================================
 # MAIN TEST RUNNER
 # ==========================================================================
@@ -305,6 +331,7 @@ run_all_tests() {
     test_disk_space_check
     test_power_of_two
     test_atomic_write
+    test_performance_defaults
     
     echo ""
     echo "╔════════════════════════════════════════════════════════╗"
@@ -345,6 +372,7 @@ Tests Available:
     - disk_space_check
     - power_of_two
     - atomic_write
+    - performance_defaults
     - all (default)
 
 Examples:
@@ -387,6 +415,7 @@ if [[ -n "$SPECIFIC_TEST" ]]; then
         disk_space_check) test_disk_space_check ;;
         power_of_two) test_power_of_two ;;
         atomic_write) test_atomic_write ;;
+        performance_defaults) test_performance_defaults ;;
         *)
             echo "Unknown test: $SPECIFIC_TEST"
             show_usage

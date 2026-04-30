@@ -41,6 +41,9 @@ readonly AGH_INSTALL_DIR="/opt/AdGuardHome"
 readonly AGH_BINARY="${AGH_INSTALL_DIR}/AdGuardHome"
 readonly AGH_YAML="${AGH_INSTALL_DIR}/AdGuardHome.yaml"
 readonly VALID_UPSTREAMS=("cloudflare" "quad9" "google" "adguard")
+readonly ROOT_HINTS_FILE="/usr/share/dns/root.hints"
+readonly ROOT_HINTS_MAX_AGE_DAYS=30
+readonly DEFAULT_BENCHMARK_QUERIES=300
 
 # Global State Variables (mutable)
 INTERACTIVE=true
@@ -111,7 +114,7 @@ check_os() {
 
 check_dependencies() {
     local missing_deps=()
-    for dep in curl wget tar jq whiptail openssl; do
+    for dep in curl wget tar jq whiptail openssl ss awk; do
         command -v "$dep" &>/dev/null || missing_deps+=("$dep")
     done
     command -v dig &>/dev/null || missing_deps+=("bind9-dnsutils")
@@ -128,6 +131,23 @@ check_dependencies() {
         (( $(date +%s) - cache_age > 3600 )) && apt-get update -qq &>/dev/null
         apt-get install -y --no-install-recommends "${missing_deps[@]}" &>/dev/null
         msg_ok "Dépendances installées"
+    fi
+}
+
+refresh_root_hints_if_needed() {
+    local max_age_seconds=$((ROOT_HINTS_MAX_AGE_DAYS * 86400))
+    local file_age=999999999
+
+    [[ "$DRY_RUN" == "true" ]] && { echo "  [DRY-RUN] Vérification root hints"; return 0; }
+    mkdir -p "$(dirname "$ROOT_HINTS_FILE")"
+
+    if [[ -f "$ROOT_HINTS_FILE" ]]; then
+        file_age=$(( $(date +%s) - $(stat -c %Y "$ROOT_HINTS_FILE" 2>/dev/null || echo 0) ))
+    fi
+
+    if (( file_age > max_age_seconds )); then
+        msg_info "Mise à jour root hints (cache ${ROOT_HINTS_MAX_AGE_DAYS}j)"
+        download_with_retry "https://www.internic.net/domain/named.cache" "$ROOT_HINTS_FILE" 3 >/dev/null && msg_ok "Root hints à jour" || msg_warn "Root hints non mis à jour"
     fi
 }
 
@@ -229,6 +249,11 @@ calculate_optimized_settings() {
         RRSET_CACHE_SIZE="512m"; MSG_CACHE_SIZE="256m"; SO_RCVBUF="8m"; SO_SNDBUF="8m"
         INFRA_HOSTS=100000;      OUTGOING_RANGE=8192;   QUERIES_PER_THREAD=8192; NEG_CACHE_SIZE="64m"
     fi
+
+    CACHE_MIN_TTL=60
+    CACHE_MAX_TTL=86400
+    SERVE_EXPIRED_TTL=86400
+    SERVE_EXPIRED_CLIENT_TIMEOUT=1800
 }
 
 install_unbound() {
@@ -286,6 +311,19 @@ server:
     outgoing-range: ${OUTGOING_RANGE}
     num-queries-per-thread: ${QUERIES_PER_THREAD}
     infra-cache-numhosts: ${INFRA_HOSTS}
+    minimal-responses: yes
+    rrset-roundrobin: yes
+
+    # --- Cache & latence ---
+    cache-min-ttl: ${CACHE_MIN_TTL}
+    cache-max-ttl: ${CACHE_MAX_TTL}
+    serve-expired: yes
+    serve-expired-ttl: ${SERVE_EXPIRED_TTL}
+    serve-expired-client-timeout: ${SERVE_EXPIRED_CLIENT_TIMEOUT}
+    serve-expired-reply-ttl: 30
+    prefetch: yes
+    prefetch-key: yes
+    aggressive-nsec: yes
 
     # --- Sécurité & Vie privée ---
     hide-identity: yes
@@ -293,16 +331,11 @@ server:
     harden-glue: yes
     harden-dnssec-stripped: yes
     harden-algo-downgrade: yes
+    qname-minimisation: yes
     use-caps-for-id: yes
     private-address: 192.168.0.0/16
     private-address: 10.0.0.0/8
     private-address: 172.16.0.0/12
-
-    # --- Préchargement ---
-    prefetch: yes
-    prefetch-key: yes
-    serve-expired: yes
-    serve-expired-ttl: 86400
 
     tls-cert-bundle: "/etc/ssl/certs/ca-certificates.crt"
 
@@ -322,8 +355,7 @@ remote-control:
 EOF
     fi
 
-    mkdir -p /usr/share/dns
-    download_with_retry "https://www.internic.net/domain/named.cache" "/usr/share/dns/root.hints" 3 &
+    refresh_root_hints_if_needed &
     local _root_hints_pid=$!
 
     if [[ ! -f "/etc/unbound/unbound_server.key" ]] && [[ "$DRY_RUN" != "true" ]]; then
@@ -411,6 +443,11 @@ try:
     config.setdefault('dns', {})
     config['dns']['upstream_dns']  = ['127.0.0.1:${UNBOUND_PORT}']
     config['dns']['bootstrap_dns'] = ['1.1.1.1', '9.9.9.9']
+    config['dns']['enable_dnssec'] = True
+    config['dns']['cache_size'] = max(int(config['dns'].get('cache_size') or 0), 4194304)
+    config['dns']['cache_ttl_min'] = max(int(config['dns'].get('cache_ttl_min') or 0), 60)
+    config['dns']['cache_ttl_max'] = max(int(config['dns'].get('cache_ttl_max') or 0), 86400)
+    config['dns']['optimistic_cache'] = True
     with open("$AGH_YAML", 'w') as f:
         yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
     print('OK')
@@ -649,6 +686,7 @@ show_help() {
     echo "  --uninstall          Désinstaller AdGuard Home et Unbound"
     echo "  --health             Exécuter le health check complet"
     echo "  --stats              Afficher les stats Unbound"
+    echo "  --benchmark [n]      Tester les performances DNS (défaut: ${DEFAULT_BENCHMARK_QUERIES})"
     echo "  --upstream <nom>     Forcer l'upstream (${VALID_UPSTREAMS[*]})"
     echo "  --dry-run            Simuler les actions sans modifier le système"
     echo "  --help               Afficher cette aide"
@@ -714,6 +752,15 @@ main() {
             header_info
             command -v unbound-control &>/dev/null || { msg_error "unbound-control non disponible"; exit 1; }
             unbound-control stats_noreset
+            ;;
+        --benchmark)
+            header_info
+            if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]] && type benchmark_dns_performance &>/dev/null; then
+                benchmark_dns_performance "${2:-$DEFAULT_BENCHMARK_QUERIES}"
+            else
+                msg_error "Benchmark indisponible (lib/health_checks.sh manquant)"
+                exit 1
+            fi
             ;;
         --update)
             header_info

@@ -237,8 +237,9 @@ benchmark_dns_performance() {
     local num_queries="${1:-1000}"
     local test_domains=("google.com" "github.com" "cloudflare.com" "amazon.com" "facebook.com")
     local unbound_port="${UNBOUND_PORT:-5335}"
+    local concurrency="${DNS_BENCH_CONCURRENCY:-16}"
     
-    msg_info "Benchmark DNS ($num_queries requêtes)..."
+    msg_info "Benchmark DNS ($num_queries requêtes, concurrence $concurrency)..."
     
     if ! command -v dig &>/dev/null; then
         msg_error "dig requis pour le benchmark"
@@ -250,15 +251,21 @@ benchmark_dns_performance() {
     
     for ((i=0; i<num_queries; i++)); do
         local domain="${test_domains[$((i % ${#test_domains[@]}))]}"
-        dig @127.0.0.1 -p "$unbound_port" "$domain" +short &>/dev/null
+        dig @127.0.0.1 -p "$unbound_port" "$domain" +short +tries=1 +timeout=2 &>/dev/null &
+        if (( (i + 1) % concurrency == 0 )); then
+            wait
+        fi
     done
+    wait
     
     local end_time
     end_time=$(date +%s%N)
     local elapsed_ms=$(( (end_time - start_time) / 1000000 ))
+    (( elapsed_ms < 1 )) && elapsed_ms=1
     local qps=$(( num_queries * 1000 / elapsed_ms ))
+    local avg_ms=$(( elapsed_ms / num_queries ))
     
-    msg_ok "Benchmark: ${num_queries} requêtes en ${elapsed_ms}ms (${qps} qps)"
+    msg_ok "Benchmark: ${num_queries} requêtes en ${elapsed_ms}ms (${qps} qps, moyenne ~${avg_ms}ms/requête)"
 }
 
 # ==========================================================================
