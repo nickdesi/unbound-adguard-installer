@@ -289,7 +289,7 @@ calculate_optimized_settings() {
     get_system_resources
 
     if [[ "$INTERACTIVE" == "true" ]]; then
-        if ! whiptail --title "Ressources Système" --yesno \
+        if ! whiptail --title "Ressources systeme" --yesno \
             "Détecté : ${CPU_CORES} CPU, ${RAM_MB} MB RAM.\n\nUtiliser ces valeurs pour l'auto-configuration ?" 10 60; then
             local user_cpu user_ram
             if user_cpu=$(whiptail --inputbox "Nombre de coeurs CPU :" 8 40 "$CPU_CORES" 3>&1 1>&2 2>&3); then
@@ -636,7 +636,7 @@ install_adguard_home() {
 # --- Uninstall Logic ---
 
 uninstall_all() {
-    if ! whiptail --title "Désinstallation" --yesno \
+    if ! whiptail --title "Desinstallation" --yesno \
         "Voulez-vous vraiment désinstaller AdGuard Home et Unbound ?\nLes fichiers de configuration seront supprimés." 10 60; then
         return 0
     fi
@@ -670,7 +670,7 @@ select_upstream() {
 
     local choice
     choice=$(whiptail \
-        --title " Résolveur DNS-over-TLS (port 853) " \
+        --title " DNS-over-TLS Upstream (port 853) " \
         --ok-button "Confirmer" \
         --cancel-button "Annuler" \
         --radiolist "Choisissez le fournisseur upstream :\n(Espace pour selectionner, Entree pour confirmer)" 16 72 4 \
@@ -759,10 +759,10 @@ show_menu() {
                 type get_adguard_web_port &>/dev/null && agh_port=$(get_adguard_web_port)
                 STEP_TOTAL=0; STEP_CURRENT=0
                 if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]] && run_full_health_check &>/dev/null; then
-                    whiptail --title " Installation réussie " \
+                    whiptail --title " Installation reussie " \
                         --msgbox "Tous les services sont actifs et vérifiés.\n\n  Upstream DNS : ${SELECTED_UPSTREAM}\n  AdGuard Home : http://${local_ip}:${agh_port}\n  Unbound      : port ${UNBOUND_PORT} (DoT)\n\nConsultez les logs : ${LOG_FILE}" 14 62
                 else
-                    whiptail --title " Installation terminée " \
+                    whiptail --title " Installation terminee " \
                         --msgbox "Installation terminée (health check non concluant).\n\n  AdGuard Home : http://${local_ip}:${agh_port}\n  Upstream DNS : ${SELECTED_UPSTREAM}\n\nConsultez les logs : ${LOG_FILE}" 13 62
                 fi
                 ;;
@@ -770,7 +770,7 @@ show_menu() {
                 select_upstream || continue
                 install_unbound
                 configure_adguard_upstream
-                whiptail --title " Reconfiguration appliquée " \
+                whiptail --title " Reconfiguration appliquee " \
                     --msgbox "Unbound et AdGuard Home ont été reconfigurés.\n\n  Upstream actif : ${SELECTED_UPSTREAM}\n  Port Unbound   : ${UNBOUND_PORT}" 11 58
                 ;;
             3)
@@ -805,13 +805,13 @@ show_menu() {
                 msg_info "Mise à jour du système en cours..."
                 apt-get update -qq &>/dev/null && apt-get upgrade -y -qq &>/dev/null
                 msg_ok "Système à jour"
-                whiptail --title " Système mis à jour " \
+                whiptail --title " MAJ systeme " \
                     --msgbox "apt update + upgrade terminés avec succès." 8 50
                 ;;
             6) update_script ;;
             7)
                 if whiptail \
-                    --title " Désinstallation " \
+                    --title " Desinstallation " \
                     --yesno "Désinstaller AdGuard Home et Unbound ?\n\nTous les fichiers de configuration seront supprimés.\nCette action est irréversible." 12 60; then
                     uninstall_all
                 fi
