@@ -673,11 +673,11 @@ select_upstream() {
         --title " Résolveur DNS-over-TLS (port 853) " \
         --ok-button "Confirmer" \
         --cancel-button "Annuler" \
-        --radiolist "Choisissez le fournisseur upstream :\n(Espace pour sélectionner, Entrée pour confirmer)" 16 72 4 \
-        "cloudflare" "Cloudflare    1.1.1.1   — Rapide, sans log"              "$cf_tag" \
-        "quad9"      "Quad9         9.9.9.9   — DNSSEC strict, filtrage menaces" "$q9_tag" \
-        "google"     "Google        8.8.8.8   — Universel, haute disponibilité" "$gg_tag" \
-        "adguard"    "AdGuard DNS  94.140.14  — Anti-pub et trackers natif"      "$ag_tag" \
+        --radiolist "Choisissez le fournisseur upstream :\n(Espace pour selectionner, Entree pour confirmer)" 16 72 4 \
+        "cloudflare" "Cloudflare    1.1.1.1   - Rapide, sans log"              "$cf_tag" \
+        "quad9"      "Quad9         9.9.9.9   - DNSSEC strict, filtrage menaces" "$q9_tag" \
+        "google"     "Google        8.8.8.8   - Universel, haute disponibilite" "$gg_tag" \
+        "adguard"    "AdGuard DNS  94.140.14  - Anti-pub et trackers natif"      "$ag_tag" \
         3>&1 1>&2 2>&3) || return 1
     [[ -n "$choice" ]] && SELECTED_UPSTREAM="$choice"
     log "Upstream sélectionné: ${SELECTED_UPSTREAM}"
@@ -716,30 +716,30 @@ show_menu() {
         agh_status=$(systemctl is-active AdGuardHome 2>/dev/null || echo "inactif")
 
         local ub_dot agh_dot
-        [[ "$ub_status"  == "active" ]] && ub_dot="●" || ub_dot="○"
-        [[ "$agh_status" == "active" ]] && agh_dot="●" || agh_dot="○"
+        [[ "$ub_status"  == "active" ]] && ub_dot="[+]" || ub_dot="[ ]"
+        [[ "$agh_status" == "active" ]] && agh_dot="[+]" || agh_dot="[ ]"
 
-        local status_line="${ub_dot} Unbound: ${ub_status}   ${agh_dot} AdGuard: ${agh_status}   ↑ ${SELECTED_UPSTREAM}"
+        local status_line="${ub_dot} Unbound: ${ub_status}   ${agh_dot} AdGuard: ${agh_status}   > ${SELECTED_UPSTREAM}"
         [[ "$DRY_RUN" == "true" ]] && status_line="[DRY-RUN]  ${status_line}"
 
-        # Label dynamique selon état d'installation
-        local label_install="Installer              Installation complète"
+        # Label dynamique selon etat d'installation
+        local label_install="Installer              Installation complete"
         if [[ "$ub_status" == "active" && "$agh_status" == "active" ]]; then
-            label_install="Réinstaller            Écraser l'installation existante"
+            label_install="Reinstaller            Ecraser l'installation existante"
         fi
 
         choice=$(whiptail \
             --title " AdGuard Home + Unbound  v${SCRIPT_VERSION} " \
             --cancel-button "Quitter" \
             --ok-button "Choisir" \
-            --menu "${status_line}\n\nSélectionnez une action :" 24 76 9 \
+            --menu "${status_line}\n\nSelectionnez une action :" 24 76 9 \
             "1" "  ${label_install}" \
-            "2" "  Réparer / Reconfigurer   Unbound + AdGuard upstream" \
+            "2" "  Reparer / Reconfigurer   Unbound + AdGuard upstream" \
             "3" "  Diagnostics              Health check complet + benchmark" \
-            "4" "  Statistiques Unbound     Cache, requêtes, performances" \
-            "5" "  Mise à jour système      apt update + upgrade" \
-            "6" "  Mise à jour script       Depuis GitHub" \
-            "7" "  Désinstaller             Supprimer AdGuard Home + Unbound" \
+            "4" "  Statistiques Unbound     Cache, requetes, performances" \
+            "5" "  MAJ Systeme              apt update + upgrade" \
+            "6" "  MAJ Script               Depuis GitHub" \
+            "7" "  Desinstaller             Supprimer AdGuard Home + Unbound" \
             "8" "  Quitter" \
             3>&1 1>&2 2>&3) || exit 0
 
