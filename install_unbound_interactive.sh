@@ -97,7 +97,8 @@ EOF
 # --- System Checks ---
 
 sanitize_textbox_output() {
-    sed -E $'s/\r/\n/g; s/\x1B\\[[0-9;?]*[ -/]*[@-~]//g; s/✓/[OK]/g; s/✗/[ERR]/g; s/⚠/[WARN]/g; s/ℹ/[INFO]/g' \
+    tr '\r' '\n' \
+        | sed -E $'s/\x1B\\[[0-9;?]*[ -/]*[@-~]//g; s/✓/[OK]/g; s/✗/[ERR]/g; s/⚠/[WARN]/g; s/ℹ/[INFO]/g' \
         | awk '
             function wrap(line, width, pos) {
                 gsub(/[[:space:]]+$/, "", line)
