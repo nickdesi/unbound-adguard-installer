@@ -306,10 +306,76 @@ get_power_of_two() {
     echo "$p"
 }
 
+count_cpuset_cpus() {
+    local cpuset=$1 total=0 part start end
+    cpuset=${cpuset//[$'\t\n\r ']/}
+    [[ -n "$cpuset" ]] || return 1
+    IFS=',' read -ra parts <<< "$cpuset"
+    for part in "${parts[@]}"; do
+        if [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            start=${BASH_REMATCH[1]}; end=${BASH_REMATCH[2]}
+            (( end >= start )) && (( total += end - start + 1 ))
+        elif [[ "$part" =~ ^[0-9]+$ ]]; then
+            (( total++ ))
+        fi
+    done
+    (( total > 0 )) && echo "$total"
+}
+
+get_cgroup_cpu_limit() {
+    local quota period cpuset cpus
+    if [[ -r /sys/fs/cgroup/cpu.max ]]; then
+        read -r quota period < /sys/fs/cgroup/cpu.max || true
+        if [[ "$quota" =~ ^[0-9]+$ && "$period" =~ ^[0-9]+$ && $period -gt 0 ]]; then
+            cpus=$(( (quota + period - 1) / period ))
+            (( cpus > 0 )) && echo "$cpus" && return 0
+        fi
+    elif [[ -r /sys/fs/cgroup/cpu/cpu.cfs_quota_us && -r /sys/fs/cgroup/cpu/cpu.cfs_period_us ]]; then
+        quota=$(< /sys/fs/cgroup/cpu/cpu.cfs_quota_us)
+        period=$(< /sys/fs/cgroup/cpu/cpu.cfs_period_us)
+        if [[ "$quota" =~ ^[0-9]+$ && "$period" =~ ^[0-9]+$ && $quota -gt 0 && $period -gt 0 ]]; then
+            cpus=$(( (quota + period - 1) / period ))
+            (( cpus > 0 )) && echo "$cpus" && return 0
+        fi
+    fi
+
+    for cpuset in /sys/fs/cgroup/cpuset.cpus.effective /sys/fs/cgroup/cpuset/cpuset.cpus.effective /sys/fs/cgroup/cpuset/cpuset.cpus; do
+        [[ -r "$cpuset" ]] || continue
+        count_cpuset_cpus "$(< "$cpuset")" && return 0
+    done
+
+    return 1
+}
+
+get_cgroup_ram_limit_mb() {
+    local limit
+    for limit in /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory/memory.limit_in_bytes; do
+        [[ -r "$limit" ]] || continue
+        limit=$(< "$limit")
+        [[ "$limit" =~ ^[0-9]+$ ]] || continue
+        (( limit > 0 && limit < 9000000000000000000 )) || continue
+        echo $(( limit / 1024 / 1024 ))
+        return 0
+    done
+    return 1
+}
+
 get_system_resources() {
-    CPU_CORES=$(nproc 2>/dev/null || nproc --all 2>/dev/null || echo 1)
-    [[ "$CPU_CORES" =~ ^[0-9]+$ ]] || CPU_CORES=1
-    RAM_MB=$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo)
+    local detected_cpu detected_ram cgroup_cpu cgroup_ram
+
+    detected_cpu=$(nproc 2>/dev/null || nproc --all 2>/dev/null || echo 1)
+    [[ "$detected_cpu" =~ ^[0-9]+$ ]] || detected_cpu=1
+    if cgroup_cpu=$(get_cgroup_cpu_limit); then
+        (( cgroup_cpu > 0 && cgroup_cpu < detected_cpu )) && detected_cpu=$cgroup_cpu
+    fi
+    CPU_CORES=$detected_cpu
+
+    detected_ram=$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo)
+    [[ "$detected_ram" =~ ^[0-9]+$ ]] || detected_ram=512
+    if cgroup_ram=$(get_cgroup_ram_limit_mb); then
+        (( cgroup_ram >= 64 && cgroup_ram < detected_ram )) && detected_ram=$cgroup_ram
+    fi
+    RAM_MB=$detected_ram
 }
 
 calculate_optimized_settings() {
