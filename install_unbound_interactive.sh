@@ -97,7 +97,22 @@ EOF
 # --- System Checks ---
 
 sanitize_textbox_output() {
-    sed -E $'s/\r//g; s/\x1B\\[[0-9;?]*[ -/]*[@-~]//g; s/✓/[OK]/g; s/✗/[ERR]/g; s/⚠/[WARN]/g; s/ℹ/[INFO]/g'
+    sed -E $'s/\r/\n/g; s/\x1B\\[[0-9;?]*[ -/]*[@-~]//g; s/✓/[OK]/g; s/✗/[ERR]/g; s/⚠/[WARN]/g; s/ℹ/[INFO]/g' \
+        | awk '
+            function wrap(line, width, pos) {
+                gsub(/[[:space:]]+$/, "", line)
+                while (length(line) > width) {
+                    pos = width
+                    while (pos > 1 && substr(line, pos, 1) != " ") pos--
+                    if (pos <= 1) pos = width
+                    print substr(line, 1, pos)
+                    line = substr(line, pos + 1)
+                    sub(/^[[:space:]]+/, "", line)
+                }
+                print line
+            }
+            { wrap($0, 76) }
+        '
 }
 
 check_root() {
@@ -708,7 +723,7 @@ show_menu() {
                     run_full_health_check > "$hc_raw" 2>&1 || true
                     type benchmark_dns_performance &>/dev/null && benchmark_dns_performance 100 >> "$hc_raw" 2>&1 || true
                     sanitize_textbox_output < "$hc_raw" > "$hc_file"
-                    whiptail --title "Diagnostics (v${SCRIPT_VERSION})" --scrolltext --textbox "$hc_file" 24 72
+                    whiptail --title "Diagnostics (v${SCRIPT_VERSION})" --scrolltext --textbox "$hc_file" 26 92
                     rm -f "$hc_raw" "$hc_file"
                 else
                     whiptail --msgbox "Module health_checks non disponible.\nAssurez-vous que lib/health_checks.sh est présent." 8 60
