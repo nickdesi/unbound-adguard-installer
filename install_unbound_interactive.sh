@@ -214,6 +214,25 @@ refresh_root_hints_if_needed() {
     fi
 }
 
+repair_unbound_trust_anchor() {
+    [[ "$DRY_RUN" == "true" ]] && { echo "  [DRY-RUN] Réparation trust anchor DNSSEC"; return 0; }
+
+    msg_warn "Réparation de la trust anchor DNSSEC Unbound"
+    mkdir -p "$(dirname "$UNBOUND_TRUST_ANCHOR")"
+    [[ -f "$UNBOUND_TRUST_ANCHOR" ]] && cp -a "$UNBOUND_TRUST_ANCHOR" "${UNBOUND_TRUST_ANCHOR}.backup.$(date +%s)" || true
+    rm -f "$UNBOUND_TRUST_ANCHOR"
+
+    if command -v unbound-anchor &>/dev/null && unbound-anchor -a "$UNBOUND_TRUST_ANCHOR" &>/dev/null; then
+        chown unbound:unbound "$UNBOUND_TRUST_ANCHOR" 2>/dev/null || true
+        chmod 644 "$UNBOUND_TRUST_ANCHOR" 2>/dev/null || true
+        msg_ok "Trust anchor DNSSEC régénérée"
+        return 0
+    fi
+
+    msg_warn "Trust anchor DNSSEC non régénérée automatiquement"
+    return 1
+}
+
 # --- Upstream Validation ---
 
 validate_upstream() {
@@ -441,7 +460,7 @@ EOF
     fi
 
     if [[ "$DRY_RUN" != "true" ]]; then
-        [[ -s "$UNBOUND_TRUST_ANCHOR" ]] || unbound-anchor -a "$UNBOUND_TRUST_ANCHOR" &>/dev/null || msg_warn "Trust anchor DNSSEC non initialisée"
+        [[ -s "$UNBOUND_TRUST_ANCHOR" ]] || repair_unbound_trust_anchor || true
         chown -R unbound:unbound /etc/unbound /var/lib/unbound
         chmod 755 /etc/unbound /etc/unbound/unbound.conf.d /var/lib/unbound
         chmod 640 /etc/unbound/unbound_control.* 2>/dev/null || true
@@ -455,13 +474,24 @@ EOF
         return 0
     fi
 
-    if unbound-checkconf &>/dev/null; then
+    local checkconf_output=""
+    local checkconf_ok=false
+    if checkconf_output=$(unbound-checkconf 2>&1); then
+        checkconf_ok=true
+    elif grep -qiE 'trust anchor|auto-trust-anchor|root\.key' <<< "$checkconf_output"; then
+        repair_unbound_trust_anchor || true
+        if checkconf_output=$(unbound-checkconf 2>&1); then
+            checkconf_ok=true
+        fi
+    fi
+
+    if [[ "$checkconf_ok" == "true" ]]; then
         systemctl enable unbound &>/dev/null
         restart_service_safely unbound 30 || { msg_error "Échec redémarrage sécurisé Unbound"; exit 1; }
         msg_ok "Configuration Unbound valide et service redémarré"
     else
         msg_error "Configuration Unbound invalide !"
-        unbound-checkconf
+        printf '%s\n' "$checkconf_output"
         exit 1
     fi
 }
@@ -636,7 +666,7 @@ select_upstream() {
         "2" "Quad9       9.9.9.9   (Sécurisé, DNSSEC strict)" \
         "3" "Google      8.8.8.8   (Fiable, Universel)" \
         "4" "AdGuard DNS 94.140.x  (Anti-pub natif)" \
-        3>&1 1>&2 2>&3) || return 0
+        3>&1 1>&2 2>&3) || return 1
     case $choice in
         1) SELECTED_UPSTREAM="cloudflare" ;;
         2) SELECTED_UPSTREAM="quad9"      ;;
@@ -694,7 +724,7 @@ show_menu() {
         case $choice in
             1)
                 STEP_TOTAL=4; STEP_CURRENT=0
-                select_upstream
+                select_upstream || continue
                 msg_step "Optimisations réseau (sysctl)"
                 apply_sysctl_tuning
                 msg_step "Installation & configuration Unbound"
@@ -713,7 +743,7 @@ show_menu() {
                 fi
                 ;;
             2)
-                select_upstream
+                select_upstream || continue
                 install_unbound
                 configure_adguard_upstream
                 whiptail --msgbox "Reconfiguration appliquée avec succès." 8 55
