@@ -219,13 +219,20 @@ repair_unbound_trust_anchor() {
 
     msg_warn "Réparation de la trust anchor DNSSEC Unbound"
 
-    local conf_file
-    while IFS= read -r conf_file; do
-        [[ "$conf_file" == "$UNBOUND_CONF_NEW" ]] && continue
-        cp -a "$conf_file" "${conf_file}.backup.$(date +%s)" 2>/dev/null || true
-        sed -i -E 's/^([[:space:]]*auto-trust-anchor-file:[[:space:]].*)/# disabled by unbound-adguard-installer: \1/' "$conf_file" 2>/dev/null || true
-        msg_warn "Directive DNSSEC dupliquée désactivée: $conf_file"
-    done < <(grep -RIlE '^[[:space:]]*auto-trust-anchor-file:[[:space:]]' /etc/unbound 2>/dev/null || true)
+    local conf_file external_anchor=false
+    for conf_file in /etc/unbound/unbound.conf /etc/unbound/unbound.conf.d/*.conf; do
+        [[ -f "$conf_file" && "$conf_file" != "$UNBOUND_CONF_NEW" ]] || continue
+        if grep -qE '^[[:space:]]*auto-trust-anchor-file:[[:space:]]' "$conf_file"; then
+            external_anchor=true
+            break
+        fi
+    done
+
+    if [[ "$external_anchor" == "true" ]] && grep -qE '^[[:space:]]*auto-trust-anchor-file:[[:space:]]' "$UNBOUND_CONF_NEW" 2>/dev/null; then
+        cp -a "$UNBOUND_CONF_NEW" "${UNBOUND_CONF_NEW}.backup.$(date +%s)" 2>/dev/null || true
+        sed -i -E 's/^([[:space:]]*auto-trust-anchor-file:[[:space:]].*)/# disabled by unbound-adguard-installer: \1/' "$UNBOUND_CONF_NEW" 2>/dev/null || true
+        msg_warn "Directive DNSSEC dupliquée désactivée dans la configuration du script"
+    fi
 
     mkdir -p "$(dirname "$UNBOUND_TRUST_ANCHOR")"
     [[ -f "$UNBOUND_TRUST_ANCHOR" ]] && cp -a "$UNBOUND_TRUST_ANCHOR" "${UNBOUND_TRUST_ANCHOR}.backup.$(date +%s)" || true
@@ -235,6 +242,15 @@ repair_unbound_trust_anchor() {
         chown unbound:unbound "$UNBOUND_TRUST_ANCHOR" 2>/dev/null || true
         chmod 644 "$UNBOUND_TRUST_ANCHOR" 2>/dev/null || true
         msg_ok "Trust anchor DNSSEC régénérée"
+        systemctl restart unbound &>/dev/null || true
+        return 0
+    fi
+
+    if [[ -s /usr/share/dns/root.key ]]; then
+        cp /usr/share/dns/root.key "$UNBOUND_TRUST_ANCHOR"
+        chown unbound:unbound "$UNBOUND_TRUST_ANCHOR" 2>/dev/null || true
+        chmod 644 "$UNBOUND_TRUST_ANCHOR" 2>/dev/null || true
+        msg_ok "Trust anchor DNSSEC restaurée depuis /usr/share/dns/root.key"
         systemctl restart unbound &>/dev/null || true
         return 0
     fi
@@ -372,6 +388,16 @@ install_unbound() {
         run_cmd mv "/etc/unbound/unbound.conf" "/etc/unbound/unbound.conf.backup.$(date +%s)"
     fi
 
+    local anchor_directive="    auto-trust-anchor-file: \"${UNBOUND_TRUST_ANCHOR}\""
+    local conf_file
+    for conf_file in /etc/unbound/unbound.conf.d/*.conf; do
+        [[ -f "$conf_file" && "$conf_file" != "$UNBOUND_CONF_NEW" ]] || continue
+        if grep -qE '^[[:space:]]*auto-trust-anchor-file:[[:space:]]' "$conf_file"; then
+            anchor_directive="    # auto-trust-anchor-file fourni par la configuration Unbound existante"
+            break
+        fi
+    done
+
     msg_info "Génération de la configuration Unbound (Threads: $NUM_THREADS, Slabs: $CACHE_SLABS)"
 
     if [[ "$DRY_RUN" != "true" ]]; then
@@ -395,7 +421,7 @@ server:
     logfile: ""
     use-syslog: yes
     root-hints: "${ROOT_HINTS_FILE}"
-    auto-trust-anchor-file: "${UNBOUND_TRUST_ANCHOR}"
+${anchor_directive}
 
     # --- Performance Tuning ---
     num-threads: ${NUM_THREADS}
