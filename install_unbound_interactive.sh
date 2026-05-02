@@ -726,7 +726,7 @@ show_menu() {
                     run_full_health_check > "$hc_raw" 2>&1 || true
                     type benchmark_dns_performance &>/dev/null && benchmark_dns_performance 100 >> "$hc_raw" 2>&1 || true
                     sanitize_textbox_output < "$hc_raw" > "$hc_file"
-                    whiptail --title "Diagnostics (v${SCRIPT_VERSION})" --scrolltext --textbox "$hc_file" 26 92
+                    whiptail --title "Diagnostics (v${SCRIPT_VERSION})" --scrolltext --textbox "$hc_file" 26 92 || true
                     rm -f "$hc_raw" "$hc_file"
                 else
                     whiptail --msgbox "Module health_checks non disponible.\nAssurez-vous que lib/health_checks.sh est présent." 8 60
