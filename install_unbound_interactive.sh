@@ -307,7 +307,8 @@ get_power_of_two() {
 }
 
 get_system_resources() {
-    CPU_CORES=$(nproc --all)
+    CPU_CORES=$(nproc 2>/dev/null || nproc --all 2>/dev/null || echo 1)
+    [[ "$CPU_CORES" =~ ^[0-9]+$ ]] || CPU_CORES=1
     RAM_MB=$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo)
 }
 
@@ -336,26 +337,34 @@ calculate_optimized_settings() {
     fi
 
     NUM_THREADS=$CPU_CORES
-    if (( CPU_CORES == 1 )); then
-        CACHE_SLABS=1
+    if (( RAM_MB <= 1024 && NUM_THREADS > 1 )); then
         NUM_THREADS=1
-    else
-        CACHE_SLABS=$(get_power_of_two "$CPU_CORES")
-        (( CACHE_SLABS < 2 )) && CACHE_SLABS=2
+    elif (( RAM_MB < 2048 && NUM_THREADS > 2 )); then
+        NUM_THREADS=2
+    elif (( RAM_MB < 4096 && NUM_THREADS > 4 )); then
+        NUM_THREADS=4
+    elif (( NUM_THREADS > 8 )); then
+        NUM_THREADS=8
     fi
 
-    if (( RAM_MB < 512 )); then
+    CACHE_SLABS=$(get_power_of_two "$NUM_THREADS")
+    (( CACHE_SLABS < 1 )) && CACHE_SLABS=1
+
+    if (( RAM_MB <= 512 )); then
         RRSET_CACHE_SIZE="16m";  MSG_CACHE_SIZE="8m";   SO_RCVBUF="1m"; SO_SNDBUF="1m"
-        INFRA_HOSTS=200;         OUTGOING_RANGE=512;    QUERIES_PER_THREAD=512; NEG_CACHE_SIZE="1m"
+        INFRA_HOSTS=2000;        OUTGOING_RANGE=512;    QUERIES_PER_THREAD=256; NEG_CACHE_SIZE="1m"
     elif (( RAM_MB < 1024 )); then
+        RRSET_CACHE_SIZE="32m";  MSG_CACHE_SIZE="16m";  SO_RCVBUF="1m"; SO_SNDBUF="1m"
+        INFRA_HOSTS=5000;        OUTGOING_RANGE=950;    QUERIES_PER_THREAD=512; NEG_CACHE_SIZE="2m"
+    elif (( RAM_MB < 2048 )); then
         RRSET_CACHE_SIZE="64m";  MSG_CACHE_SIZE="32m";  SO_RCVBUF="2m"; SO_SNDBUF="2m"
-        INFRA_HOSTS=10000;       OUTGOING_RANGE=2048;   QUERIES_PER_THREAD=1024; NEG_CACHE_SIZE="4m"
+        INFRA_HOSTS=10000;       OUTGOING_RANGE=950;    QUERIES_PER_THREAD=512; NEG_CACHE_SIZE="4m"
     elif (( RAM_MB < 4096 )); then
-        RRSET_CACHE_SIZE="256m"; MSG_CACHE_SIZE="128m"; SO_RCVBUF="4m"; SO_SNDBUF="4m"
-        INFRA_HOSTS=50000;       OUTGOING_RANGE=8192;   QUERIES_PER_THREAD=4096; NEG_CACHE_SIZE="32m"
+        RRSET_CACHE_SIZE="128m"; MSG_CACHE_SIZE="64m";  SO_RCVBUF="4m"; SO_SNDBUF="4m"
+        INFRA_HOSTS=25000;       OUTGOING_RANGE=2048;   QUERIES_PER_THREAD=1024; NEG_CACHE_SIZE="16m"
     else
-        RRSET_CACHE_SIZE="512m"; MSG_CACHE_SIZE="256m"; SO_RCVBUF="8m"; SO_SNDBUF="8m"
-        INFRA_HOSTS=100000;      OUTGOING_RANGE=8192;   QUERIES_PER_THREAD=8192; NEG_CACHE_SIZE="64m"
+        RRSET_CACHE_SIZE="256m"; MSG_CACHE_SIZE="128m"; SO_RCVBUF="4m"; SO_SNDBUF="4m"
+        INFRA_HOSTS=50000;       OUTGOING_RANGE=4096;   QUERIES_PER_THREAD=2048; NEG_CACHE_SIZE="32m"
     fi
 
     CACHE_MIN_TTL=60
