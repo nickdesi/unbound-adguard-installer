@@ -43,6 +43,9 @@ readonly AGH_YAML="${AGH_INSTALL_DIR}/AdGuardHome.yaml"
 readonly VALID_UPSTREAMS=("cloudflare" "quad9" "google" "adguard")
 readonly ROOT_HINTS_FILE="/usr/share/dns/root.hints"
 readonly ROOT_HINTS_MAX_AGE_DAYS=30
+readonly UNBOUND_CONF="/etc/unbound/unbound.conf"
+readonly UNBOUND_CONF_NEW="/etc/unbound/unbound.conf.d/99-adguard-unbound-installer.conf"
+readonly UNBOUND_TRUST_ANCHOR="/var/lib/unbound/root.key"
 readonly DEFAULT_BENCHMARK_QUERIES=300
 
 # Global State Variables (mutable)
@@ -51,6 +54,7 @@ SELECTED_UPSTREAM="cloudflare"
 DRY_RUN=false
 CPU_CORES=1
 RAM_MB=512
+ALLOW_PROXMOX_HOST=false
 
 # --- Error Handling & Cleanup ---
 
@@ -112,24 +116,63 @@ check_os() {
     fi
 }
 
-check_dependencies() {
-    local missing_deps=()
-    for dep in curl wget tar jq whiptail openssl ss awk; do
-        command -v "$dep" &>/dev/null || missing_deps+=("$dep")
-    done
-    command -v dig &>/dev/null || missing_deps+=("bind9-dnsutils")
-    if ! command -v python3 &>/dev/null; then
-        missing_deps+=("python3" "python3-yaml")
-    elif ! python3 -c "import yaml" &>/dev/null 2>&1; then
-        missing_deps+=("python3-yaml")
+is_proxmox_host() {
+    [[ -d /etc/pve ]] || command -v pveversion &>/dev/null
+}
+
+is_lxc_container() {
+    grep -qaE 'lxc|liblxc' /proc/1/environ /proc/1/cgroup 2>/dev/null \
+        || systemd-detect-virt --container 2>/dev/null | grep -q '^lxc$' \
+        || [[ -f /run/systemd/container && "$(cat /run/systemd/container 2>/dev/null)" == "lxc" ]]
+}
+
+check_proxmox_target() {
+    if is_proxmox_host && [[ "$ALLOW_PROXMOX_HOST" != "true" ]]; then
+        msg_error "Hôte Proxmox détecté. Installez ce service dans un conteneur LXC Debian/Ubuntu, pas sur le nœud PVE."
+        msg_error "Contournement non recommandé: --allow-proxmox-host"
+        exit 1
     fi
 
-    if [[ ${#missing_deps[@]} -gt 0 ]]; then
-        msg_info "Installation des dépendances manquantes: ${missing_deps[*]}"
+    if is_lxc_container; then
+        msg_ok "Environnement LXC détecté"
+    else
+        msg_warn "Aucun conteneur LXC détecté — script optimisé pour Proxmox LXC Debian/Ubuntu."
+    fi
+}
+
+check_dependencies() {
+    local missing_cmds=() missing_pkgs=()
+    local dep cmd pkg
+    local deps=(
+        "curl:curl" "wget:wget" "tar:tar" "jq:jq" "whiptail:whiptail"
+        "openssl:openssl" "ss:iproute2" "awk:mawk" "sed:sed" "grep:grep"
+    )
+
+    for dep in "${deps[@]}"; do
+        cmd="${dep%%:*}"
+        pkg="${dep#*:}"
+        command -v "$cmd" &>/dev/null || { missing_cmds+=("$cmd"); missing_pkgs+=("$pkg"); }
+    done
+    command -v dig &>/dev/null || { missing_cmds+=("dig"); missing_pkgs+=("bind9-dnsutils"); }
+    if ! command -v python3 &>/dev/null; then
+        missing_cmds+=("python3" "python3-yaml")
+        missing_pkgs+=("python3" "python3-yaml")
+    elif ! python3 -c "import yaml" &>/dev/null 2>&1; then
+        missing_cmds+=("python3-yaml")
+        missing_pkgs+=("python3-yaml")
+    fi
+
+    if [[ ${#missing_pkgs[@]} -gt 0 ]]; then
+        msg_info "Installation des dépendances manquantes: ${missing_cmds[*]}"
+        if [[ "$DRY_RUN" == "true" ]]; then
+            echo "  [DRY-RUN] apt-get install -y --no-install-recommends ${missing_pkgs[*]}"
+            msg_ok "Dépendances simulées"
+            return 0
+        fi
         local cache_age
         cache_age=$(stat -c %Y /var/lib/apt/lists 2>/dev/null || echo 0)
         (( $(date +%s) - cache_age > 3600 )) && apt-get update -qq &>/dev/null
-        apt-get install -y --no-install-recommends "${missing_deps[@]}" &>/dev/null
+        apt-get install -y --no-install-recommends "${missing_pkgs[@]}" &>/dev/null
         msg_ok "Dépendances installées"
     fi
 }
@@ -283,14 +326,27 @@ install_unbound() {
     msg_info "Génération de la configuration Unbound (Threads: $NUM_THREADS, Slabs: $CACHE_SLABS)"
 
     if [[ "$DRY_RUN" != "true" ]]; then
-        cat > /etc/unbound/unbound.conf <<EOF
+        mkdir -p /etc/unbound/unbound.conf.d /var/lib/unbound
+        cat > "${UNBOUND_CONF}.tmp" <<'EOF'
+include: "/etc/unbound/unbound.conf.d/*.conf"
+EOF
+        mv "${UNBOUND_CONF}.tmp" "$UNBOUND_CONF"
+        cat > "${UNBOUND_CONF_NEW}.tmp" <<EOF
 server:
     verbosity: 1
     interface: 127.0.0.1
     port: ${UNBOUND_PORT}
     do-ip4: yes
+    do-ip6: no
     do-udp: yes
     do-tcp: yes
+    chroot: ""
+    username: "unbound"
+    directory: "/etc/unbound"
+    logfile: ""
+    use-syslog: yes
+    root-hints: "${ROOT_HINTS_FILE}"
+    auto-trust-anchor-file: "${UNBOUND_TRUST_ANCHOR}"
 
     # --- Performance Tuning ---
     num-threads: ${NUM_THREADS}
@@ -353,6 +409,7 @@ remote-control:
     control-key-file: "/etc/unbound/unbound_control.key"
     control-cert-file: "/etc/unbound/unbound_control.pem"
 EOF
+        mv "${UNBOUND_CONF_NEW}.tmp" "$UNBOUND_CONF_NEW"
     fi
 
     refresh_root_hints_if_needed &
@@ -364,9 +421,11 @@ EOF
     fi
 
     if [[ "$DRY_RUN" != "true" ]]; then
-        chown -R unbound:unbound /etc/unbound
-        chmod 755 /etc/unbound
+        [[ -s "$UNBOUND_TRUST_ANCHOR" ]] || unbound-anchor -a "$UNBOUND_TRUST_ANCHOR" &>/dev/null || msg_warn "Trust anchor DNSSEC non initialisée"
+        chown -R unbound:unbound /etc/unbound /var/lib/unbound
+        chmod 755 /etc/unbound /etc/unbound/unbound.conf.d /var/lib/unbound
         chmod 640 /etc/unbound/unbound_control.* 2>/dev/null || true
+        chmod 644 "$ROOT_HINTS_FILE" 2>/dev/null || true
     fi
 
     wait "${_root_hints_pid:-}" 2>/dev/null || true
@@ -689,6 +748,7 @@ show_help() {
     echo "  --benchmark [n]      Tester les performances DNS (défaut: ${DEFAULT_BENCHMARK_QUERIES})"
     echo "  --upstream <nom>     Forcer l'upstream (${VALID_UPSTREAMS[*]})"
     echo "  --dry-run            Simuler les actions sans modifier le système"
+    echo "  --allow-proxmox-host Autoriser l'exécution sur le nœud Proxmox (déconseillé)"
     echo "  --help               Afficher cette aide"
     echo ""
     echo "Sans option: menu interactif."
@@ -702,7 +762,11 @@ main() {
 
     local args=()
     for arg in "$@"; do
-        [[ "$arg" == "--dry-run" ]] && DRY_RUN=true || args+=("$arg")
+        case "$arg" in
+            --dry-run) DRY_RUN=true ;;
+            --allow-proxmox-host) ALLOW_PROXMOX_HOST=true ;;
+            *) args+=("$arg") ;;
+        esac
     done
     [[ ${#args[@]} -gt 0 ]] && set -- "${args[@]}" || set --
 
@@ -710,6 +774,7 @@ main() {
 
     check_root
     check_os
+    check_proxmox_target
     check_dependencies
 
     if [[ "${1:-}" == "--upstream" && -n "${2:-}" ]]; then
