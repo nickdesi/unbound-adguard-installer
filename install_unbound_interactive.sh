@@ -218,6 +218,15 @@ repair_unbound_trust_anchor() {
     [[ "$DRY_RUN" == "true" ]] && { echo "  [DRY-RUN] Réparation trust anchor DNSSEC"; return 0; }
 
     msg_warn "Réparation de la trust anchor DNSSEC Unbound"
+
+    local conf_file
+    while IFS= read -r conf_file; do
+        [[ "$conf_file" == "$UNBOUND_CONF_NEW" ]] && continue
+        cp -a "$conf_file" "${conf_file}.backup.$(date +%s)" 2>/dev/null || true
+        sed -i -E 's/^([[:space:]]*auto-trust-anchor-file:[[:space:]].*)/# disabled by unbound-adguard-installer: \1/' "$conf_file" 2>/dev/null || true
+        msg_warn "Directive DNSSEC dupliquée désactivée: $conf_file"
+    done < <(grep -RIlE '^[[:space:]]*auto-trust-anchor-file:[[:space:]]' /etc/unbound 2>/dev/null || true)
+
     mkdir -p "$(dirname "$UNBOUND_TRUST_ANCHOR")"
     [[ -f "$UNBOUND_TRUST_ANCHOR" ]] && cp -a "$UNBOUND_TRUST_ANCHOR" "${UNBOUND_TRUST_ANCHOR}.backup.$(date +%s)" || true
     rm -f "$UNBOUND_TRUST_ANCHOR"
@@ -226,6 +235,7 @@ repair_unbound_trust_anchor() {
         chown unbound:unbound "$UNBOUND_TRUST_ANCHOR" 2>/dev/null || true
         chmod 644 "$UNBOUND_TRUST_ANCHOR" 2>/dev/null || true
         msg_ok "Trust anchor DNSSEC régénérée"
+        systemctl restart unbound &>/dev/null || true
         return 0
     fi
 
