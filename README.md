@@ -115,6 +115,25 @@ Conseils :
 
 ## Installation rapide
 
+### One-liner
+
+Dans un LXC Debian/Ubuntu dédié :
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/nickdesi/unbound-adguard-installer/main/setup.sh)"
+```
+
+Avec options CLI, par exemple installation non interactive avec Quad9 :
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/nickdesi/unbound-adguard-installer/main/setup.sh)" -- --upstream quad9 --install
+```
+
+> [!NOTE]
+> Le one-liner télécharge le dépôt complet dans un dossier temporaire, puis lance `install_unbound_interactive.sh`. C’est nécessaire car le script dépend de `lib/common.sh`.
+
+### Installation manuelle
+
 Clonez le dépôt complet, puis lancez le script dans le LXC :
 
 ```bash
