@@ -134,9 +134,21 @@ check_unbound_health() {
     fi
     
     # 2. Config validity
-    if ! unbound-checkconf &>/dev/null; then
+    local checkconf_output=""
+    local checkconf_ok=false
+    if checkconf_output=$(unbound-checkconf 2>&1); then
+        checkconf_ok=true
+    elif grep -qiE 'trust anchor|auto-trust-anchor|root\.key' <<< "$checkconf_output" && command -v repair_unbound_trust_anchor &>/dev/null; then
+        msg_warn "Trust anchor DNSSEC corrompue, tentative de réparation..."
+        repair_unbound_trust_anchor || true
+        if checkconf_output=$(unbound-checkconf 2>&1); then
+            checkconf_ok=true
+        fi
+    fi
+
+    if [[ "$checkconf_ok" != "true" ]]; then
         msg_error "Configuration Unbound invalide"
-        unbound-checkconf 2>&1 | head -n 10
+        printf '%s\n' "$checkconf_output" | head -n 10
         ((errors++))
     else
         msg_ok "Configuration Unbound valide"
