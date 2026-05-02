@@ -96,6 +96,10 @@ EOF
 
 # --- System Checks ---
 
+sanitize_textbox_output() {
+    sed -E $'s/\r//g; s/\x1B\\[[0-9;?]*[ -/]*[@-~]//g; s/✓/[OK]/g; s/✗/[ERR]/g; s/⚠/[WARN]/g; s/ℹ/[INFO]/g'
+}
+
 check_root() {
     if [[ $EUID -ne 0 ]]; then
         msg_error "Ce script doit être exécuté en tant que root."
@@ -698,11 +702,14 @@ show_menu() {
                 ;;
             3)
                 if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]]; then
-                    local hc_file; hc_file=$(mktemp)
-                    run_full_health_check 2>&1 | tee "$hc_file" >/dev/null
-                    type benchmark_dns_performance &>/dev/null && benchmark_dns_performance 100 2>&1 | tee -a "$hc_file" >/dev/null
+                    local hc_raw hc_file
+                    hc_raw=$(mktemp)
+                    hc_file=$(mktemp)
+                    run_full_health_check > "$hc_raw" 2>&1 || true
+                    type benchmark_dns_performance &>/dev/null && benchmark_dns_performance 100 >> "$hc_raw" 2>&1 || true
+                    sanitize_textbox_output < "$hc_raw" > "$hc_file"
                     whiptail --title "Diagnostics (v${SCRIPT_VERSION})" --scrolltext --textbox "$hc_file" 24 72
-                    rm -f "$hc_file"
+                    rm -f "$hc_raw" "$hc_file"
                 else
                     whiptail --msgbox "Module health_checks non disponible.\nAssurez-vous que lib/health_checks.sh est présent." 8 60
                 fi
