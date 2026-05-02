@@ -703,11 +703,13 @@ show_menu() {
                 install_adguard_home
                 msg_step "Health check post-installation"
                 local local_ip; local_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+                local agh_port="3000"
+                type get_adguard_web_port &>/dev/null && agh_port=$(get_adguard_web_port)
                 STEP_TOTAL=0; STEP_CURRENT=0
                 if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]] && run_full_health_check &>/dev/null; then
-                    whiptail --msgbox "✓ Installation réussie et vérifiée !\n\nURL: http://${local_ip}:3000\n\nTous les tests passés." 12 60
+                    whiptail --msgbox "✓ Installation réussie et vérifiée !\n\nURL: http://${local_ip}:${agh_port}\n\nTous les tests passés." 12 60
                 else
-                    whiptail --msgbox "Installation terminée.\n\nURL: http://${local_ip}:3000\n\nConsultez: ${LOG_FILE}" 12 60
+                    whiptail --msgbox "Installation terminée.\n\nURL: http://${local_ip}:${agh_port}\n\nConsultez: ${LOG_FILE}" 12 60
                 fi
                 ;;
             2)

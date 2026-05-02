@@ -78,6 +78,46 @@ test_dot_connectivity() {
 # SERVICE HEALTH CHECKS
 # ==========================================================================
 
+get_adguard_web_port() {
+    local yaml="${AGH_YAML:-/opt/AdGuardHome/AdGuardHome.yaml}"
+    local port="${AGH_WEB_PORT:-}"
+
+    if [[ "$port" =~ ^[0-9]+$ ]]; then
+        echo "$port"
+        return 0
+    fi
+
+    if [[ -f "$yaml" ]]; then
+        port=$(awk '
+            /^[[:space:]]*bind_port:[[:space:]]*[0-9]+/ { print $2; exit }
+            /^[[:space:]]*address:[[:space:]]*/ {
+                line = $0
+                sub(/^[^:]+:[[:space:]]*/, "", line)
+                gsub(/[\"[:space:]]/, "", line)
+                if (line ~ /:[0-9]+$/) { sub(/^.*:/, "", line); print line; exit }
+                if (line ~ /^[0-9]+$/) { print line; exit }
+            }
+        ' "$yaml" 2>/dev/null)
+    fi
+
+    if [[ "$port" =~ ^[0-9]+$ ]]; then
+        echo "$port"
+    else
+        echo "3000"
+    fi
+}
+
+is_port_listening() {
+    local port="$1"
+    ss -H -tuln 2>/dev/null | awk -v port=":${port}" '$5 ~ port "$" { found = 1 } END { exit !found }'
+}
+
+is_adguard_web_reachable() {
+    local port="$1"
+    curl -kfsSL --max-time 5 "http://127.0.0.1:${port}" &>/dev/null \
+        || curl -kfsSL --max-time 5 "https://127.0.0.1:${port}" &>/dev/null
+}
+
 # Comprehensive Unbound health check
 # Usage: check_unbound_health
 check_unbound_health() {
@@ -131,8 +171,9 @@ check_unbound_health() {
 # Usage: check_adguard_health
 check_adguard_health() {
     local errors=0
-    local agh_url="http://127.0.0.1:3000"
-    
+    local agh_port
+    agh_port=$(get_adguard_web_port)
+
     msg_info "Vérification santé AdGuard Home..."
     
     # 1. Service status
@@ -151,20 +192,20 @@ check_adguard_health() {
         msg_ok "Fichier de configuration AdGuard présent"
     fi
     
-    # 3. Port 3000 listening
-    if ! ss -tulnp | grep -q ":3000\s"; then
-        msg_error "AdGuard Home n'écoute pas sur le port 3000"
+    # 3. Web port listening
+    if ! is_port_listening "$agh_port"; then
+        msg_error "AdGuard Home n'écoute pas sur le port ${agh_port}"
         ((errors++))
     else
-        msg_ok "AdGuard Home écoute sur le port 3000"
+        msg_ok "AdGuard Home écoute sur le port ${agh_port}"
     fi
-    
+
     # 4. Web UI reachable
     if command -v curl &>/dev/null; then
-        if curl -fsSL --max-time 5 "$agh_url" &>/dev/null; then
-            msg_ok "Interface web AdGuard accessible"
+        if is_adguard_web_reachable "$agh_port"; then
+            msg_ok "Interface web AdGuard accessible sur le port ${agh_port}"
         else
-            msg_warn "Interface web AdGuard non accessible (première installation ?)"
+            msg_warn "Interface web AdGuard non accessible sur le port ${agh_port} (première installation ?)"
         fi
     fi
     
@@ -189,6 +230,8 @@ check_adguard_health() {
 # Usage: generate_performance_report
 generate_performance_report() {
     local report_file="/tmp/dns_performance_report_$(date +%s).txt"
+    local agh_port
+    agh_port=$(get_adguard_web_port)
     
     cat > "$report_file" <<EOF
 =================================================================
@@ -225,8 +268,8 @@ EOF
 DNS Ports:
 EOF
     
-    ss -tulnp | grep -E ':(53|5335|3000)\s' >> "$report_file"
-    
+    ss -tulnp | grep -E ":(53|5335|${agh_port})\\s" >> "$report_file" || true
+
     msg_ok "Rapport généré: $report_file"
     echo "$report_file"
 }
