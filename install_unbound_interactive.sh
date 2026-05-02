@@ -659,20 +659,27 @@ uninstall_all() {
 # --- Main Menus ---
 
 select_upstream() {
-    local choice
-    choice=$(whiptail --title "DNS-over-TLS Upstream" \
-        --menu "Actuel: ${SELECTED_UPSTREAM}\nChoisir le fournisseur upstream :" 18 65 4 \
-        "1" "Cloudflare  1.1.1.1   (Rapide, No-log)" \
-        "2" "Quad9       9.9.9.9   (Sécurisé, DNSSEC strict)" \
-        "3" "Google      8.8.8.8   (Fiable, Universel)" \
-        "4" "AdGuard DNS 94.140.x  (Anti-pub natif)" \
-        3>&1 1>&2 2>&3) || return 1
-    case $choice in
-        1) SELECTED_UPSTREAM="cloudflare" ;;
-        2) SELECTED_UPSTREAM="quad9"      ;;
-        3) SELECTED_UPSTREAM="google"     ;;
-        4) SELECTED_UPSTREAM="adguard"    ;;
+    local cf_tag q9_tag gg_tag ag_tag
+    cf_tag="OFF"; q9_tag="OFF"; gg_tag="OFF"; ag_tag="OFF"
+    case "$SELECTED_UPSTREAM" in
+        cloudflare) cf_tag="ON" ;;
+        quad9)      q9_tag="ON" ;;
+        google)     gg_tag="ON" ;;
+        adguard)    ag_tag="ON" ;;
     esac
+
+    local choice
+    choice=$(whiptail \
+        --title " Résolveur DNS-over-TLS (port 853) " \
+        --ok-button "Confirmer" \
+        --cancel-button "Annuler" \
+        --radiolist "Choisissez le fournisseur upstream :\n(Espace pour sélectionner, Entrée pour confirmer)" 16 72 4 \
+        "cloudflare" "Cloudflare    1.1.1.1   — Rapide, sans log"              "$cf_tag" \
+        "quad9"      "Quad9         9.9.9.9   — DNSSEC strict, filtrage menaces" "$q9_tag" \
+        "google"     "Google        8.8.8.8   — Universel, haute disponibilité" "$gg_tag" \
+        "adguard"    "AdGuard DNS  94.140.14  — Anti-pub et trackers natif"      "$ag_tag" \
+        3>&1 1>&2 2>&3) || return 1
+    [[ -n "$choice" ]] && SELECTED_UPSTREAM="$choice"
     log "Upstream sélectionné: ${SELECTED_UPSTREAM}"
 }
 
@@ -703,22 +710,37 @@ show_menu() {
     local choice
     while true; do
         header_info
+
         local ub_status agh_status
         ub_status=$(systemctl is-active unbound 2>/dev/null || echo "inactif")
         agh_status=$(systemctl is-active AdGuardHome 2>/dev/null || echo "inactif")
-        local desc="Unbound: ${ub_status}  |  AdGuard: ${agh_status}  |  Upstream: ${SELECTED_UPSTREAM}"
-        [[ "$DRY_RUN" == "true" ]] && desc="[DRY-RUN] ${desc}"
 
-        choice=$(whiptail --title "Menu (v${SCRIPT_VERSION})" \
-            --menu "${desc}" 20 65 8 \
-            "1" "Installer (Complet)" \
-            "2" "Reparer / Reconfigurer" \
-            "3" "Health Check + Diagnostics" \
-            "4" "Stats Unbound" \
-            "5" "MAJ Systeme" \
-            "6" "MAJ Script" \
-            "7" "Desinstaller" \
-            "8" "Quitter" \
+        local ub_dot agh_dot
+        [[ "$ub_status"  == "active" ]] && ub_dot="●" || ub_dot="○"
+        [[ "$agh_status" == "active" ]] && agh_dot="●" || agh_dot="○"
+
+        local status_line="${ub_dot} Unbound: ${ub_status}   ${agh_dot} AdGuard: ${agh_status}   ↑ ${SELECTED_UPSTREAM}"
+        [[ "$DRY_RUN" == "true" ]] && status_line="[DRY-RUN]  ${status_line}"
+
+        # Label dynamique selon état d'installation
+        local label_install="Installer              Installation complète"
+        if [[ "$ub_status" == "active" && "$agh_status" == "active" ]]; then
+            label_install="Réinstaller            Écraser l'installation existante"
+        fi
+
+        choice=$(whiptail \
+            --title " AdGuard Home + Unbound  v${SCRIPT_VERSION} " \
+            --cancel-button "Quitter" \
+            --ok-button "Choisir" \
+            --menu "${status_line}\n\nSélectionnez une action :" 24 76 9 \
+            "1" "  ${label_install}" \
+            "2" "  Réparer / Reconfigurer   Unbound + AdGuard upstream" \
+            "3" "  Diagnostics              Health check complet + benchmark" \
+            "4" "  Statistiques Unbound     Cache, requêtes, performances" \
+            "5" "  Mise à jour système      apt update + upgrade" \
+            "6" "  Mise à jour script       Depuis GitHub" \
+            "7" "  Désinstaller             Supprimer AdGuard Home + Unbound" \
+            "8" "  Quitter" \
             3>&1 1>&2 2>&3) || exit 0
 
         case $choice in
@@ -737,16 +759,19 @@ show_menu() {
                 type get_adguard_web_port &>/dev/null && agh_port=$(get_adguard_web_port)
                 STEP_TOTAL=0; STEP_CURRENT=0
                 if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]] && run_full_health_check &>/dev/null; then
-                    whiptail --msgbox "✓ Installation réussie et vérifiée !\n\nURL: http://${local_ip}:${agh_port}\n\nTous les tests passés." 12 60
+                    whiptail --title " Installation réussie " \
+                        --msgbox "Tous les services sont actifs et vérifiés.\n\n  Upstream DNS : ${SELECTED_UPSTREAM}\n  AdGuard Home : http://${local_ip}:${agh_port}\n  Unbound      : port ${UNBOUND_PORT} (DoT)\n\nConsultez les logs : ${LOG_FILE}" 14 62
                 else
-                    whiptail --msgbox "Installation terminée.\n\nURL: http://${local_ip}:${agh_port}\n\nConsultez: ${LOG_FILE}" 12 60
+                    whiptail --title " Installation terminée " \
+                        --msgbox "Installation terminée (health check non concluant).\n\n  AdGuard Home : http://${local_ip}:${agh_port}\n  Upstream DNS : ${SELECTED_UPSTREAM}\n\nConsultez les logs : ${LOG_FILE}" 13 62
                 fi
                 ;;
             2)
                 select_upstream || continue
                 install_unbound
                 configure_adguard_upstream
-                whiptail --msgbox "Reconfiguration appliquée avec succès." 8 55
+                whiptail --title " Reconfiguration appliquée " \
+                    --msgbox "Unbound et AdGuard Home ont été reconfigurés.\n\n  Upstream actif : ${SELECTED_UPSTREAM}\n  Port Unbound   : ${UNBOUND_PORT}" 11 58
                 ;;
             3)
                 if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]]; then
@@ -756,33 +781,42 @@ show_menu() {
                     run_full_health_check > "$hc_raw" 2>&1 || true
                     type benchmark_dns_performance &>/dev/null && benchmark_dns_performance 100 >> "$hc_raw" 2>&1 || true
                     sanitize_textbox_output < "$hc_raw" > "$hc_file"
-                    whiptail --title "Diagnostics (v${SCRIPT_VERSION})" --scrolltext --textbox "$hc_file" 26 92 || true
+                    whiptail --title " Diagnostics  v${SCRIPT_VERSION} " --scrolltext --textbox "$hc_file" 26 92 || true
                     rm -f "$hc_raw" "$hc_file"
                 else
-                    whiptail --msgbox "Module health_checks non disponible.\nAssurez-vous que lib/health_checks.sh est présent." 8 60
+                    whiptail --title " Module manquant " \
+                        --msgbox "lib/health_checks.sh introuvable.\nAssurez-vous de cloner le dépôt complet." 9 58
                 fi
                 ;;
             4)
                 if command -v unbound-control &>/dev/null; then
                     local stats_file; stats_file=$(mktemp)
                     if unbound-control stats_noreset > "$stats_file" 2>&1 && [[ -s "$stats_file" ]]; then
-                        whiptail --title "Stats Unbound" --scrolltext --textbox "$stats_file" 24 72
+                        whiptail --title " Statistiques Unbound " --scrolltext --textbox "$stats_file" 26 76
                     else
-                        whiptail --msgbox "Stats non disponibles (Unbound inactif ?)." 8 50
+                        whiptail --msgbox "Statistiques non disponibles.\nUnbound est-il actif ? (systemctl status unbound)" 9 56
                     fi
                     rm -f "$stats_file"
                 else
-                    whiptail --msgbox "unbound-control non disponible.\nInstallez Unbound d'abord." 8 55
+                    whiptail --msgbox "unbound-control introuvable.\nInstallez Unbound d'abord (option 1)." 9 52
                 fi
                 ;;
             5)
-                msg_info "Mise à jour OS en cours..."
+                msg_info "Mise à jour du système en cours..."
                 apt-get update -qq &>/dev/null && apt-get upgrade -y -qq &>/dev/null
                 msg_ok "Système à jour"
+                whiptail --title " Système mis à jour " \
+                    --msgbox "apt update + upgrade terminés avec succès." 8 50
                 ;;
-            6) update_script  ;;
-            7) uninstall_all  ;;
-            8) exit 0          ;;
+            6) update_script ;;
+            7)
+                if whiptail \
+                    --title " Désinstallation " \
+                    --yesno "Désinstaller AdGuard Home et Unbound ?\n\nTous les fichiers de configuration seront supprimés.\nCette action est irréversible." 12 60; then
+                    uninstall_all
+                fi
+                ;;
+            8) exit 0 ;;
         esac
     done
 }
