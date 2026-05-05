@@ -433,10 +433,10 @@ calculate_optimized_settings() {
         INFRA_HOSTS=50000;       OUTGOING_RANGE=4096;   QUERIES_PER_THREAD=2048; NEG_CACHE_SIZE="32m"
     fi
 
-    CACHE_MIN_TTL=60
+    CACHE_MIN_TTL=120
     CACHE_MAX_TTL=86400
     SERVE_EXPIRED_TTL=86400
-    SERVE_EXPIRED_CLIENT_TIMEOUT=1800
+    SERVE_EXPIRED_CLIENT_TIMEOUT=0
 }
 
 install_unbound() {
@@ -530,6 +530,8 @@ ${anchor_directive}
     prefetch: yes
     prefetch-key: yes
     aggressive-nsec: yes
+    serve-original-ttl: yes
+    unwanted-reply-threshold: 10000
 
     # --- Sécurité & Vie privée ---
     hide-identity: yes
@@ -664,8 +666,8 @@ try:
     config['dns']['upstream_dns']  = ['127.0.0.1:${UNBOUND_PORT}']
     config['dns']['bootstrap_dns'] = ['1.1.1.1', '9.9.9.9']
     config['dns']['enable_dnssec'] = True
-    config['dns']['cache_size'] = max(int(config['dns'].get('cache_size') or 0), 4194304)
-    config['dns']['cache_ttl_min'] = max(int(config['dns'].get('cache_ttl_min') or 0), 60)
+    config['dns']['cache_size'] = max(int(config['dns'].get('cache_size') or 0), 16777216)
+    config['dns']['cache_ttl_min'] = max(int(config['dns'].get('cache_ttl_min') or 0), 120)
     config['dns']['cache_ttl_max'] = max(int(config['dns'].get('cache_ttl_max') or 0), 86400)
     config['dns']['optimistic_cache'] = True
     with open("$AGH_YAML", 'w') as f:
