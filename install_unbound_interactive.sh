@@ -744,6 +744,99 @@ install_adguard_home() {
     fi
 }
 
+reset_adguard_password() {
+    if [[ ! -f "$AGH_YAML" ]]; then
+        whiptail --title " AdGuard Home " \
+            --msgbox "Configuration introuvable :\n${AGH_YAML}\n\nInstallez AdGuard Home d'abord." 10 62
+        return 1
+    fi
+
+    local username password password_confirm password_hash
+    username=$(whiptail \
+        --title " Reset mot de passe AdGuard " \
+        --inputbox "Utilisateur AdGuard à réinitialiser :" 9 58 "admin" \
+        3>&1 1>&2 2>&3) || return 1
+
+    if [[ -z "$username" ]]; then
+        whiptail --title " Reset annule " --msgbox "Le nom d'utilisateur ne peut pas être vide." 8 54
+        return 1
+    fi
+
+    password=$(whiptail \
+        --title " Nouveau mot de passe " \
+        --passwordbox "Saisissez le nouveau mot de passe :" 9 58 \
+        3>&1 1>&2 2>&3) || return 1
+    password_confirm=$(whiptail \
+        --title " Confirmation " \
+        --passwordbox "Confirmez le nouveau mot de passe :" 9 58 \
+        3>&1 1>&2 2>&3) || return 1
+
+    if [[ -z "$password" ]]; then
+        whiptail --title " Reset annule " --msgbox "Le mot de passe ne peut pas être vide." 8 54
+        return 1
+    fi
+
+    if [[ "$password" != "$password_confirm" ]]; then
+        whiptail --title " Reset annule " --msgbox "Les mots de passe ne correspondent pas." 8 54
+        return 1
+    fi
+
+    msg_info "Réinitialisation du mot de passe AdGuard Home..."
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "  [DRY-RUN] Reset du mot de passe AdGuard pour l'utilisateur ${username}"
+        return 0
+    fi
+
+    if ! command -v htpasswd &>/dev/null; then
+        msg_info "Installation de apache2-utils pour générer le hash bcrypt..."
+        apt-get update -qq &>/dev/null || true
+        apt-get install -y --no-install-recommends apache2-utils &>/dev/null
+    fi
+
+    command -v htpasswd &>/dev/null || { msg_error "htpasswd introuvable"; return 1; }
+
+    password_hash=$(printf '%s\n' "$password" | htpasswd -niB -C 10 "$username" | cut -d: -f2-)
+    [[ -n "$password_hash" ]] || { msg_error "Échec génération du hash bcrypt"; return 1; }
+
+    create_backup "$AGH_YAML" || true
+
+    AGH_RESET_USER="$username" AGH_RESET_HASH="$password_hash" python3 - <<'PYTHON'
+import os
+import sys
+import yaml
+
+path = os.environ.get("AGH_YAML", "/opt/AdGuardHome/AdGuardHome.yaml")
+username = os.environ["AGH_RESET_USER"]
+password_hash = os.environ["AGH_RESET_HASH"]
+
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f) or {}
+
+    users = config.get("users")
+    if not isinstance(users, list):
+        users = []
+        config["users"] = users
+
+    for user in users:
+        if isinstance(user, dict) and user.get("name") == username:
+            user["password"] = password_hash
+            break
+    else:
+        users.append({"name": username, "password": password_hash})
+
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+except Exception as exc:
+    print(f"ERREUR: {exc}", file=sys.stderr)
+    sys.exit(1)
+PYTHON
+
+    restart_service_safely AdGuardHome 30 || true
+    msg_ok "Mot de passe AdGuard Home réinitialisé pour ${username}"
+}
+
 # --- Uninstall Logic ---
 
 uninstall_all() {
@@ -843,15 +936,16 @@ show_menu() {
             --title " AdGuard Home + Unbound  v${SCRIPT_VERSION} " \
             --cancel-button "Quitter" \
             --ok-button "Choisir" \
-            --menu "${status_line}\n\nSelectionnez une action :" 24 76 9 \
+            --menu "${status_line}\n\nSelectionnez une action :" 24 76 10 \
             "1" "  ${label_install}" \
             "2" "  Reparer / Reconfigurer   Unbound + AdGuard upstream" \
             "3" "  Diagnostics              Health check complet + benchmark" \
             "4" "  Statistiques Unbound     Cache, requetes, performances" \
             "5" "  MAJ Systeme              apt update + upgrade" \
             "6" "  MAJ Script               Depuis GitHub" \
-            "7" "  Desinstaller             Supprimer AdGuard Home + Unbound" \
-            "8" "  Quitter" \
+            "7" "  Reset mot de passe       AdGuard Home" \
+            "8" "  Desinstaller             Supprimer AdGuard Home + Unbound" \
+            "9" "  Quitter" \
             3>&1 1>&2 2>&3) || exit 0
 
         case $choice in
@@ -921,13 +1015,19 @@ show_menu() {
                 ;;
             6) update_script ;;
             7)
+                if reset_adguard_password; then
+                    whiptail --title " Reset mot de passe " \
+                        --msgbox "Mot de passe AdGuard Home mis à jour.\n\nReconnectez-vous à l'interface web avec le nouveau mot de passe." 10 62
+                fi
+                ;;
+            8)
                 if whiptail \
                     --title " Desinstallation " \
                     --yesno "Désinstaller AdGuard Home et Unbound ?\n\nTous les fichiers de configuration seront supprimés.\nCette action est irréversible." 12 60; then
                     uninstall_all
                 fi
                 ;;
-            8) exit 0 ;;
+            9) exit 0 ;;
         esac
     done
 }
