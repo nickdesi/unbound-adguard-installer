@@ -484,6 +484,15 @@ install_unbound() {
 
     msg_info "Génération de la configuration Unbound (Threads: $NUM_THREADS, Slabs: $CACHE_SLABS)"
 
+    local _UPSTREAM_LINES
+    case "$SELECTED_UPSTREAM" in
+        cloudflare) _UPSTREAM_LINES=$'    forward-addr: 1.1.1.1@853#cloudflare-dns.com\n    forward-addr: 1.0.0.1@853#cloudflare-dns.com' ;;
+        quad9)      _UPSTREAM_LINES=$'    forward-addr: 9.9.9.9@853#dns.quad9.net\n    forward-addr: 149.112.112.112@853#dns.quad9.net' ;;
+        google)     _UPSTREAM_LINES=$'    forward-addr: 8.8.8.8@853#dns.google\n    forward-addr: 8.8.4.4@853#dns.google' ;;
+        adguard)    _UPSTREAM_LINES=$'    forward-addr: 94.140.14.14@853#dns.adguard.com\n    forward-addr: 94.140.15.15@853#dns.adguard.com' ;;
+        *)          _UPSTREAM_LINES=$'    forward-addr: 1.1.1.1@853#cloudflare-dns.com\n    forward-addr: 1.0.0.1@853#cloudflare-dns.com' ;;
+    esac
+
     if [[ "$DRY_RUN" != "true" ]]; then
         mkdir -p /etc/unbound/unbound.conf.d /var/lib/unbound
         cat > "${UNBOUND_CONF}.tmp" <<'EOF'
@@ -564,7 +573,7 @@ ${anchor_directive}
 forward-zone:
     name: "."
     forward-tls-upstream: yes
-    $(get_upstream_forward_lines)
+    ${_UPSTREAM_LINES}
 
 remote-control:
     control-enable: yes
@@ -623,31 +632,7 @@ EOF
     fi
 }
 
-get_upstream_forward_lines() {
-    case "$SELECTED_UPSTREAM" in
-        cloudflare)
-            echo "forward-addr: 1.1.1.1@853#cloudflare-dns.com"
-            echo "    forward-addr: 1.0.0.1@853#cloudflare-dns.com"
-            ;;
-        quad9)
-            echo "forward-addr: 9.9.9.9@853#dns.quad9.net"
-            echo "    forward-addr: 149.112.112.112@853#dns.quad9.net"
-            ;;
-        google)
-            echo "forward-addr: 8.8.8.8@853#dns.google"
-            echo "    forward-addr: 8.8.4.4@853#dns.google"
-            ;;
-        adguard)
-            echo "forward-addr: 94.140.14.14@853#dns.adguard.com"
-            echo "    forward-addr: 94.140.15.15@853#dns.adguard.com"
-            ;;
-        *)
-            msg_warn "Upstream '$SELECTED_UPSTREAM' non reconnu, fallback Cloudflare"
-            echo "forward-addr: 1.1.1.1@853#cloudflare-dns.com"
-            echo "    forward-addr: 1.0.0.1@853#cloudflare-dns.com"
-            ;;
-    esac
-}
+
 
 # --- AdGuard Home Logic ---
 
@@ -680,7 +665,7 @@ try:
     config['dns']['upstream_dns']  = ['127.0.0.1:${UNBOUND_PORT}']
     config['dns']['bootstrap_dns'] = ['1.1.1.1', '9.9.9.9']
     config['dns']['enable_dnssec'] = True
-    config['dns']['cache_size'] = max(int(config['dns'].get('cache_size') or 0), 16777216)
+    config['dns']['cache_size'] = 4194304
     config['dns']['cache_ttl_min'] = max(int(config['dns'].get('cache_ttl_min') or 0), 120)
     config['dns']['cache_ttl_max'] = max(int(config['dns'].get('cache_ttl_max') or 0), 86400)
     config['dns']['optimistic_cache'] = True
@@ -708,36 +693,35 @@ install_adguard_home() {
 
     check_disk_space /opt 150 || { msg_error "Espace disque insuffisant (150 MB requis)"; return 1; }
 
-    msg_info "Détection architecture..."
-    local ARCH AGH_ARCH
-    ARCH=$(uname -m)
-    case $ARCH in
-        x86_64)  AGH_ARCH="amd64"  ;;
-        aarch64) AGH_ARCH="arm64"  ;;
-        armv7l)  AGH_ARCH="armv7"  ;;
-        *) msg_error "Architecture non supportée: $ARCH"; exit 1 ;;
-    esac
-
-    msg_info "Récupération de la dernière version AdGuard Home..."
-    local LATEST_VER
-    LATEST_VER=$(fetch_json_api "https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest" | jq -r '.tag_name')
-
-    if [[ -z "$LATEST_VER" || "$LATEST_VER" == "null" ]]; then
-        msg_error "Impossible de trouver la dernière version AdGuard Home"
-        exit 1
-    fi
-
-    local url="https://github.com/AdguardTeam/AdGuardHome/releases/download/${LATEST_VER}/AdGuardHome_linux_${AGH_ARCH}.tar.gz"
-
-    if [[ "$DRY_RUN" == "true" ]]; then
-        msg_ok "[DRY-RUN] Téléchargement simulé: $url"
+    if [[ ! -f "/tmp/agh_install/AGH.tar.gz" ]]; then
+        msg_info "Détection architecture..."
+        local ARCH AGH_ARCH
+        ARCH=$(uname -m)
+        case $ARCH in
+            x86_64)  AGH_ARCH="amd64"  ;;
+            aarch64) AGH_ARCH="arm64"  ;;
+            armv7l)  AGH_ARCH="armv7"  ;;
+            *) msg_error "Architecture non supportée: $ARCH"; exit 1 ;;
+        esac
+        msg_info "Récupération de la dernière version AdGuard Home..."
+        local LATEST_VER
+        LATEST_VER=$(fetch_json_api "https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest" | jq -r '.tag_name')
+        if [[ -z "$LATEST_VER" || "$LATEST_VER" == "null" ]]; then
+            msg_error "Impossible de trouver la dernière version AdGuard Home"
+            exit 1
+        fi
+        _AGH_VER="$LATEST_VER"
+        local url="https://github.com/AdguardTeam/AdGuardHome/releases/download/${LATEST_VER}/AdGuardHome_linux_${AGH_ARCH}.tar.gz"
+        if [[ "$DRY_RUN" == "true" ]]; then
+            msg_ok "[DRY-RUN] Téléchargement simulé: $url"
+            return 0
+        fi
+        download_with_retry "$url" "/tmp/agh_install/AGH.tar.gz" 3 || {
+            msg_error "Échec téléchargement AdGuard Home"; return 1
+        }
+    elif [[ "$DRY_RUN" == "true" ]]; then
         return 0
     fi
-
-    mkdir -p /tmp/agh_install
-    download_with_retry "$url" "/tmp/agh_install/AGH.tar.gz" 3 || {
-        msg_error "Échec téléchargement AdGuard Home"; return 1
-    }
 
     tar -xzf /tmp/agh_install/AGH.tar.gz -C /tmp/agh_install
     mkdir -p "$AGH_INSTALL_DIR"
@@ -965,15 +949,17 @@ show_menu() {
             3>&1 1>&2 2>&3) || exit 0
 
         case $choice in
-            1)
-                STEP_TOTAL=4; STEP_CURRENT=0
-                select_upstream || continue
-                msg_step "Optimisations réseau (sysctl)"
-                apply_sysctl_tuning
-                msg_step "Installation & configuration Unbound"
-                install_unbound
-                msg_step "Installation AdGuard Home"
-                install_adguard_home
+                1)
+                    STEP_TOTAL=4; STEP_CURRENT=0
+                    select_upstream || continue
+                    _prefetch_adguard &
+                    msg_step "Optimisations réseau (sysctl)"
+                    apply_sysctl_tuning
+                    msg_step "Installation & configuration Unbound"
+                    install_unbound
+                    msg_step "Installation AdGuard Home"
+                    wait 2>/dev/null || true
+                    install_adguard_home
                 msg_step "Health check post-installation"
                 local local_ip; local_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
                 local agh_port="3000"
@@ -1071,6 +1057,19 @@ show_help() {
     exit 0
 }
 
+_AGH_VER=""
+_prefetch_adguard() {
+    [[ -f "$AGH_BINARY" ]] && return 0
+    local arch agh_arch
+    arch=$(uname -m)
+    case $arch in x86_64) agh_arch="amd64" ;; aarch64) agh_arch="arm64" ;; armv7l) agh_arch="armv7" ;; *) return 1 ;; esac
+    local ver
+    ver=$(fetch_json_api "https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest" | jq -r '.tag_name')
+    [[ -z "$ver" || "$ver" == "null" ]] && return 1
+    mkdir -p /tmp/agh_install
+    download_with_retry "https://github.com/AdguardTeam/AdGuardHome/releases/download/${ver}/AdGuardHome_linux_${agh_arch}.tar.gz" "/tmp/agh_install/AGH.tar.gz" 3 && _AGH_VER="$ver"
+}
+
 # --- Entry Point ---
 
 main() {
@@ -1104,11 +1103,13 @@ main() {
             INTERACTIVE=false
             header_info
             STEP_TOTAL=3; STEP_CURRENT=0
+            _prefetch_adguard &
             msg_step "Optimisations sysctl"
             apply_sysctl_tuning
             msg_step "Installation Unbound"
             install_unbound
             msg_step "Installation AdGuard Home"
+            wait 2>/dev/null || true
             install_adguard_home
             STEP_TOTAL=0
             msg_ok "Installation terminée !"

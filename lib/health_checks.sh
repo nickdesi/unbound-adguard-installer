@@ -170,7 +170,7 @@ check_unbound_health() {
     # 5. Cache stats
     if command -v unbound-control &>/dev/null; then
         local cache_hits
-        cache_hits=$(unbound-control stats_noreset 2>/dev/null | grep "total.num.cachehits" | awk '{print $2}')
+        cache_hits=$(unbound-control stats_noreset 2>/dev/null | awk '/total.num.cachehits/ {print $2}')
         if [[ -n "$cache_hits" ]]; then
             msg_ok "Cache Unbound fonctionnel ($cache_hits hits)"
         fi
@@ -264,12 +264,14 @@ RAM Available: ${mem_avail} MB
 EOF
     
     if [[ -f /etc/unbound/unbound.conf ]]; then
-        echo "Threads: $(grep -E '^\s*num-threads:' /etc/unbound/unbound.conf | awk '{print $2}')" >> "$report_file"
-        echo "Cache Slabs: $(grep -E '^\s*msg-cache-slabs:' /etc/unbound/unbound.conf | awk '{print $2}')" >> "$report_file"
-        echo "RRset Cache: $(grep -E '^\s*rrset-cache-size:' /etc/unbound/unbound.conf | awk '{print $2}')" >> "$report_file"
-        echo "Msg Cache: $(grep -E '^\s*msg-cache-size:' /etc/unbound/unbound.conf | awk '{print $2}')" >> "$report_file"
-        echo "Key Cache: $(grep -E '^\s*key-cache-size:' /etc/unbound/unbound.conf | awk '{print $2}')" >> "$report_file"
-        echo "Val Cache: $(grep -E '^\s*val-cache-size:' /etc/unbound/unbound.conf | awk '{print $2}')" >> "$report_file"
+        awk 'BEGIN {
+            v["num-threads"]="Threads"; v["msg-cache-slabs"]="Cache Slabs"
+            v["rrset-cache-size"]="RRset Cache"; v["msg-cache-size"]="Msg Cache"
+            v["key-cache-size"]="Key Cache"; v["val-cache-size"]="Val Cache"
+        }
+        /^\s*(num-threads|msg-cache-slabs|rrset-cache-size|msg-cache-size|key-cache-size|val-cache-size):/ {
+            print v[$1]": "$2
+        }' /etc/unbound/unbound.conf >> "$report_file"
     fi
     
     cat >> "$report_file" <<EOF
