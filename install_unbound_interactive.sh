@@ -360,7 +360,9 @@ get_cgroup_ram_limit_mb() {
     return 1
 }
 
+_RESOURCES_CACHED=false
 get_system_resources() {
+    [[ "$_RESOURCES_CACHED" == "true" ]] && return 0
     local detected_cpu detected_ram cgroup_cpu cgroup_ram
 
     detected_cpu=$(nproc 2>/dev/null || nproc --all 2>/dev/null || echo 1)
@@ -376,6 +378,7 @@ get_system_resources() {
         (( cgroup_ram >= 64 && cgroup_ram < detected_ram )) && detected_ram=$cgroup_ram
     fi
     RAM_MB=$detected_ram
+    _RESOURCES_CACHED=true
 }
 
 calculate_optimized_settings() {
@@ -880,10 +883,10 @@ select_upstream() {
         --ok-button "Confirmer" \
         --cancel-button "Annuler" \
         --radiolist "Choisissez le fournisseur upstream :\n(Espace pour selectionner, Entree pour confirmer)" 16 72 4 \
-        "cloudflare" "Cloudflare    1.1.1.1   - Rapide, sans log"              "$cf_tag" \
-        "quad9"      "Quad9         9.9.9.9   - DNSSEC strict, filtrage menaces" "$q9_tag" \
-        "google"     "Google        8.8.8.8   - Universel, haute disponibilite" "$gg_tag" \
-        "adguard"    "AdGuard DNS  94.140.14  - Anti-pub et trackers natif"      "$ag_tag" \
+        "cloudflare" "Cloudflare   1.1.1.1         - Rapide, sans log"              "$cf_tag" \
+        "quad9"      "Quad9        9.9.9.9         - DNSSEC strict, anti-menaces" "$q9_tag" \
+        "google"     "Google       8.8.8.8         - Universel, haute dispo"      "$gg_tag" \
+        "adguard"    "AdGuard DNS  94.140.14.14    - Anti-pub et trackers natif"   "$ag_tag" \
         3>&1 1>&2 2>&3) || return 1
     [[ -n "$choice" ]] && SELECTED_UPSTREAM="$choice"
     log "Upstream sélectionné: ${SELECTED_UPSTREAM}"
@@ -892,23 +895,23 @@ select_upstream() {
 update_script() {
     msg_info "Vérification de la mise à jour du script..."
     local remote_url="https://raw.githubusercontent.com/nickdesi/unbound-adguard-installer/main/install_unbound_interactive.sh"
-    local local_file="$0"
+    local new_file="${0}.new"
 
-    if curl -fsSL "$remote_url" -o "${local_file}.tmp"; then
+    if curl -fsSL "$remote_url" -o "$new_file"; then
         local remote_version
-        remote_version=$(grep -m1 'readonly SCRIPT_VERSION=' "${local_file}.tmp" | cut -d'"' -f2)
+        remote_version=$(grep -m1 'readonly SCRIPT_VERSION=' "$new_file" | cut -d'"' -f2)
         if [[ -n "$remote_version" && "$remote_version" == "$SCRIPT_VERSION" ]]; then
             msg_ok "Déjà à jour (v${SCRIPT_VERSION})"
-            rm -f "${local_file}.tmp"
+            rm -f "$new_file"
             return 0
         fi
-        chmod +x "${local_file}.tmp"
-        mv "${local_file}.tmp" "$local_file"
+        chmod +x "$new_file"
+        mv "$new_file" "$0"
         msg_ok "Mis à jour: v${SCRIPT_VERSION} → v${remote_version:-inconnue}. Relancez le script."
         exit 0
     else
         msg_error "Échec du téléchargement de la mise à jour."
-        rm -f "${local_file}.tmp"
+        rm -f "$new_file"
     fi
 }
 
@@ -1010,7 +1013,7 @@ show_menu() {
                 ;;
             5)
                 msg_info "Mise à jour du système en cours..."
-                apt-get update -qq &>/dev/null && apt-get upgrade -y -qq &>/dev/null
+                apt-get update -qq && apt-get upgrade -y -qq --no-install-recommends
                 msg_ok "Système à jour"
                 whiptail --title " MAJ systeme " \
                     --msgbox "apt update + upgrade terminés avec succès." 8 50
@@ -1037,23 +1040,23 @@ show_menu() {
 # --- Usage / Help ---
 
 show_help() {
-    echo "Usage: $0 [OPTIONS]"
+    echo -e "${BL}Usage:${CL} $0 [OPTIONS]"
     echo ""
-    echo "Options:"
-    echo "  --install            Installation complète (AdGuard Home + Unbound)"
-    echo "  --repair             Reconfigurer Unbound + AdGuard (sans réinstaller)"
-    echo "  --unbound-only       Installer/reconfigurer uniquement Unbound"
-    echo "  --update             Mettre à jour ce script depuis GitHub"
-    echo "  --uninstall          Désinstaller AdGuard Home et Unbound"
-    echo "  --health             Exécuter le health check complet"
-    echo "  --stats              Afficher les stats Unbound"
-    echo "  --benchmark [n]      Tester les performances DNS (défaut: ${DEFAULT_BENCHMARK_QUERIES})"
-    echo "  --upstream <nom>     Forcer l'upstream (${VALID_UPSTREAMS[*]})"
-    echo "  --dry-run            Simuler les actions sans modifier le système"
-    echo "  --allow-proxmox-host Autoriser l'exécution sur le nœud Proxmox (déconseillé)"
-    echo "  --help               Afficher cette aide"
+    echo -e "${GN}Options:${CL}"
+    echo -e "  ${YW}--install${CL}            Installation complète (AdGuard Home + Unbound)"
+    echo -e "  ${YW}--repair${CL}             Reconfigurer Unbound + AdGuard (sans réinstaller)"
+    echo -e "  ${YW}--unbound-only${CL}       Installer/reconfigurer uniquement Unbound"
+    echo -e "  ${YW}--update${CL}             Mettre à jour ce script depuis GitHub"
+    echo -e "  ${YW}--uninstall${CL}          Désinstaller AdGuard Home et Unbound"
+    echo -e "  ${YW}--health${CL}             Exécuter le health check complet"
+    echo -e "  ${YW}--stats${CL}              Afficher les stats Unbound"
+    echo -e "  ${YW}--benchmark${CL} [n]      Tester les performances DNS (défaut: ${DEFAULT_BENCHMARK_QUERIES})"
+    echo -e "  ${YW}--upstream${CL} <nom>     Forcer l'upstream (${VALID_UPSTREAMS[*]})"
+    echo -e "  ${YW}--dry-run${CL}            Simuler les actions sans modifier le système"
+    echo -e "  ${YW}--allow-proxmox-host${CL} Autoriser l'exécution sur le nœud Proxmox (déconseillé)"
+    echo -e "  ${YW}--help${CL}               Afficher cette aide"
     echo ""
-    echo "Sans option: menu interactif."
+    echo -e "Sans option: menu interactif."
     exit 0
 }
 

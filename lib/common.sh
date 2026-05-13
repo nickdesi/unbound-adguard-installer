@@ -336,22 +336,9 @@ atomic_write() {
     local file_path="$1"
     local content="$2"
     local temp_file="${file_path}.tmp.$$"
-    
-    # Write to temp file
-    if ! echo "$content" > "$temp_file"; then
-        msg_error "Échec écriture fichier temporaire: $temp_file"
-        rm -f "$temp_file"
-        return 1
-    fi
-    
-    # Atomic move
-    if mv "$temp_file" "$file_path"; then
-        return 0
-    else
-        msg_error "Échec déplacement atomique: $temp_file -> $file_path"
-        rm -f "$temp_file"
-        return 1
-    fi
+
+    printf '%s\n' "$content" > "$temp_file" || { msg_error "Échec écriture fichier temporaire: $temp_file"; rm -f "$temp_file"; return 1; }
+    mv "$temp_file" "$file_path" || { msg_error "Échec déplacement atomique: $temp_file -> $file_path"; rm -f "$temp_file"; return 1; }
 }
 
 # Safe sed replacement (creates backup)

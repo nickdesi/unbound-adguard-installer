@@ -245,6 +245,11 @@ generate_performance_report() {
     local agh_port
     agh_port=$(get_adguard_web_port)
     
+    local meminfo
+    meminfo=$(awk '/MemTotal|MemAvailable/ {printf "%.0f ", $2/1024}' /proc/meminfo)
+    local mem_total=${meminfo%% *}
+    local mem_avail=${meminfo##* }
+
     cat > "$report_file" <<EOF
 =================================================================
 DNS Performance Report - $(date)
@@ -252,8 +257,8 @@ DNS Performance Report - $(date)
 
 --- SYSTEM RESOURCES ---
 CPU Cores: $(nproc --all)
-RAM Total: $(awk '/MemTotal/ {printf "%.0f MB", $2/1024}' /proc/meminfo)
-RAM Available: $(awk '/MemAvailable/ {printf "%.0f MB", $2/1024}' /proc/meminfo)
+RAM Total: ${mem_total} MB
+RAM Available: ${mem_avail} MB
 
 --- UNBOUND CONFIG ---
 EOF
@@ -293,33 +298,37 @@ benchmark_dns_performance() {
     local test_domains=("google.com" "github.com" "cloudflare.com" "amazon.com" "facebook.com")
     local unbound_port="${UNBOUND_PORT:-5335}"
     local concurrency="${DNS_BENCH_CONCURRENCY:-16}"
-    
+
     msg_info "Benchmark DNS ($num_queries requêtes, concurrence $concurrency)..."
-    
+
     if ! command -v dig &>/dev/null; then
         msg_error "dig requis pour le benchmark"
         return 1
     fi
-    
+
+    # Generate domain list (round-robin), then resolve in parallel via xargs
+    local domains_file
+    domains_file=$(mktemp)
+    local i
+    for ((i=0; i<num_queries; i++)); do
+        printf '%s\n' "${test_domains[$((i % ${#test_domains[@]}))]}" >> "$domains_file"
+    done
+
     local start_time
     start_time=$(date +%s%N)
-    
-    for ((i=0; i<num_queries; i++)); do
-        local domain="${test_domains[$((i % ${#test_domains[@]}))]}"
-        dig @127.0.0.1 -p "$unbound_port" "$domain" +short +tries=1 +timeout=2 &>/dev/null &
-        if (( (i + 1) % concurrency == 0 )); then
-            wait
-        fi
-    done
-    wait
-    
+
+    xargs -P "$concurrency" -I {} -a "$domains_file" \
+        dig @127.0.0.1 -p "$unbound_port" {} +short +tries=1 +timeout=2 &>/dev/null
+
     local end_time
     end_time=$(date +%s%N)
+    rm -f "$domains_file"
+
     local elapsed_ms=$(( (end_time - start_time) / 1000000 ))
     (( elapsed_ms < 1 )) && elapsed_ms=1
     local qps=$(( num_queries * 1000 / elapsed_ms ))
     local avg_ms=$(( elapsed_ms / num_queries ))
-    
+
     msg_ok "Benchmark: ${num_queries} requêtes en ${elapsed_ms}ms (${qps} qps, moyenne ~${avg_ms}ms/requête)"
 }
 
