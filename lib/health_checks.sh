@@ -268,6 +268,8 @@ EOF
         echo "Cache Slabs: $(grep -E '^\s*msg-cache-slabs:' /etc/unbound/unbound.conf | awk '{print $2}')" >> "$report_file"
         echo "RRset Cache: $(grep -E '^\s*rrset-cache-size:' /etc/unbound/unbound.conf | awk '{print $2}')" >> "$report_file"
         echo "Msg Cache: $(grep -E '^\s*msg-cache-size:' /etc/unbound/unbound.conf | awk '{print $2}')" >> "$report_file"
+        echo "Key Cache: $(grep -E '^\s*key-cache-size:' /etc/unbound/unbound.conf | awk '{print $2}')" >> "$report_file"
+        echo "Val Cache: $(grep -E '^\s*val-cache-size:' /etc/unbound/unbound.conf | awk '{print $2}')" >> "$report_file"
     fi
     
     cat >> "$report_file" <<EOF
@@ -295,9 +297,13 @@ EOF
 # Usage: benchmark_dns_performance [num_queries]
 benchmark_dns_performance() {
     local num_queries="${1:-1000}"
-    local test_domains=("google.com" "github.com" "cloudflare.com" "amazon.com" "facebook.com")
     local unbound_port="${UNBOUND_PORT:-5335}"
-    local concurrency="${DNS_BENCH_CONCURRENCY:-16}"
+
+    local nproc
+    nproc=$(nproc 2>/dev/null || echo 4)
+    local concurrency=$(( nproc * 2 ))
+    (( concurrency < 4 )) && concurrency=4
+    (( concurrency > 32 )) && concurrency=32
 
     msg_info "Benchmark DNS ($num_queries requêtes, concurrence $concurrency)..."
 
@@ -306,30 +312,83 @@ benchmark_dns_performance() {
         return 1
     fi
 
-    # Generate domain list (round-robin), then resolve in parallel via xargs
-    local domains_file
-    domains_file=$(mktemp)
+    local domains=(
+        google.com github.com cloudflare.com amazon.com facebook.com
+        microsoft.com apple.com netflix.com twitter.com linkedin.com
+        wikipedia.org kernel.org python.org apache.org mozilla.org
+        stackoverflow.net akamai.net archive.net
+        github.io digitalocean.io
+        lemonde.fr orange.fr
+        spiegel.de dw.de
+        bbc.co.uk yandex.ru baidu.cn aliexpress.com
+        instagram.com whatsapp.com zoom.us
+    )
+
+    local num_domains=${#domains[@]}
+    local results_file
+    results_file=$(mktemp)
+
+    # Warm-up: 50 queries (discarded)
     local i
-    for ((i=0; i<num_queries; i++)); do
-        printf '%s\n' "${test_domains[$((i % ${#test_domains[@]}))]}" >> "$domains_file"
+    for ((i=0; i<50; i++)); do
+        dig @127.0.0.1 -p "$unbound_port" "${domains[$((i % num_domains))]}" +short +tries=1 +timeout=2 &>/dev/null
     done
 
     local start_time
     start_time=$(date +%s%N)
 
-    xargs -P "$concurrency" -I {} -a "$domains_file" \
-        dig @127.0.0.1 -p "$unbound_port" {} +short +tries=1 +timeout=2 &>/dev/null
+    for ((i=0; i<num_queries; i++)); do
+        (
+            tstart=$(date +%s%N)
+            dig @127.0.0.1 -p "$unbound_port" "${domains[$((i % num_domains))]}" +short +tries=1 +timeout=2 &>/dev/null
+            rc=$?
+            tend=$(date +%s%N)
+            elapsed=$(( (tend - tstart) / 1000000 ))
+            echo "$elapsed $rc"
+        ) >> "$results_file" &
+        if (( (i + 1) % concurrency == 0 )); then
+            wait
+        fi
+    done
+    wait
 
     local end_time
     end_time=$(date +%s%N)
-    rm -f "$domains_file"
 
     local elapsed_ms=$(( (end_time - start_time) / 1000000 ))
     (( elapsed_ms < 1 )) && elapsed_ms=1
     local qps=$(( num_queries * 1000 / elapsed_ms ))
-    local avg_ms=$(( elapsed_ms / num_queries ))
 
-    msg_ok "Benchmark: ${num_queries} requêtes en ${elapsed_ms}ms (${qps} qps, moyenne ~${avg_ms}ms/requête)"
+    # Parse individual query times
+    local -a times=()
+    local fail_count=0
+    local t rc
+    while read -r t rc; do
+        if [[ "$rc" != "0" ]]; then
+            ((fail_count++))
+        else
+            times+=("$t")
+        fi
+    done < "$results_file"
+    rm -f "$results_file"
+
+    local count=${#times[@]}
+    local avg_ms=0 p50=0 p95=0 p99=0 sum=0
+    if (( count > 0 )); then
+        local sorted
+        sorted=$(printf '%s\n' "${times[@]}" | sort -n)
+        local -a sorted_times
+        mapfile -t sorted_times <<< "$sorted"
+        for t in "${sorted_times[@]}"; do
+            sum=$((sum + t))
+        done
+        avg_ms=$((sum / count))
+        p50=${sorted_times[$((count * 50 / 100))]}
+        p95=${sorted_times[$((count * 95 / 100))]}
+        p99=${sorted_times[$((count * 99 / 100))]}
+    fi
+
+    msg_ok "Benchmark: ${num_queries} requêtes en ${elapsed_ms}ms (${qps} qps, moyenne ${avg_ms}ms, P50=${p50}ms P95=${p95}ms P99=${p99}ms, échecs=${fail_count}/${num_queries})"
 }
 
 # ==========================================================================

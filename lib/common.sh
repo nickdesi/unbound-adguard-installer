@@ -337,7 +337,7 @@ atomic_write() {
     local content="$2"
     local temp_file="${file_path}.tmp.$$"
 
-    printf '%s\n' "$content" > "$temp_file" || { msg_error "Échec écriture fichier temporaire: $temp_file"; rm -f "$temp_file"; return 1; }
+    printf '%s' "$content" > "$temp_file" || { msg_error "Échec écriture fichier temporaire: $temp_file"; rm -f "$temp_file"; return 1; }
     mv "$temp_file" "$file_path" || { msg_error "Échec déplacement atomique: $temp_file -> $file_path"; rm -f "$temp_file"; return 1; }
 }
 
@@ -354,7 +354,7 @@ safe_sed() {
         return 1
     fi
     
-    if sed -i"${backup_suffix}" "s|${pattern}|${replacement}|g" "$file"; then
+    if sed -i"${backup_suffix}" --follow-symlinks "s|${pattern}|${replacement}|g" "$file"; then
         msg_ok "Modification appliquée: $file"
         return 0
     else

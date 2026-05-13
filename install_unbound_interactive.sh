@@ -290,6 +290,13 @@ net.core.netdev_max_backlog = 50000
 net.ipv4.udp_mem = 65536 131072 262144
 net.ipv4.conf.all.accept_redirects = 0
 net.ipv6.conf.all.accept_redirects = 0
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_slow_start_after_idle = 0
+net.core.optmem_max = 65536
+net.ipv4.ip_local_port_range = 1024 65535
+net.core.somaxconn = 4096
+net.ipv4.tcp_mem = 65536 131072 262144
 EOF
     if sysctl -p "$SYSCTL_CONF" &>/dev/null; then
         msg_ok "Optimisations sysctl appliquées"
@@ -421,25 +428,24 @@ calculate_optimized_settings() {
 
     if (( RAM_MB <= 512 )); then
         RRSET_CACHE_SIZE="16m";  MSG_CACHE_SIZE="8m";   SO_RCVBUF="1m"; SO_SNDBUF="1m"
-        INFRA_HOSTS=2000;        OUTGOING_RANGE=512;    QUERIES_PER_THREAD=256; NEG_CACHE_SIZE="1m"
+        INFRA_HOSTS=2000;        OUTGOING_RANGE=512;    QUERIES_PER_THREAD=256; NEG_CACHE_SIZE="1m"; KEY_CACHE_SIZE="2m"; VAL_CACHE_SIZE="2m"
     elif (( RAM_MB < 1024 )); then
         RRSET_CACHE_SIZE="32m";  MSG_CACHE_SIZE="16m";  SO_RCVBUF="1m"; SO_SNDBUF="1m"
-        INFRA_HOSTS=5000;        OUTGOING_RANGE=950;    QUERIES_PER_THREAD=512; NEG_CACHE_SIZE="2m"
+        INFRA_HOSTS=5000;        OUTGOING_RANGE=950;    QUERIES_PER_THREAD=512; NEG_CACHE_SIZE="2m"; KEY_CACHE_SIZE="4m"; VAL_CACHE_SIZE="4m"
     elif (( RAM_MB < 2048 )); then
         RRSET_CACHE_SIZE="64m";  MSG_CACHE_SIZE="32m";  SO_RCVBUF="2m"; SO_SNDBUF="2m"
-        INFRA_HOSTS=10000;       OUTGOING_RANGE=950;    QUERIES_PER_THREAD=512; NEG_CACHE_SIZE="4m"
+        INFRA_HOSTS=10000;       OUTGOING_RANGE=950;    QUERIES_PER_THREAD=512; NEG_CACHE_SIZE="4m"; KEY_CACHE_SIZE="8m"; VAL_CACHE_SIZE="8m"
     elif (( RAM_MB < 4096 )); then
         RRSET_CACHE_SIZE="128m"; MSG_CACHE_SIZE="64m";  SO_RCVBUF="4m"; SO_SNDBUF="4m"
-        INFRA_HOSTS=25000;       OUTGOING_RANGE=2048;   QUERIES_PER_THREAD=1024; NEG_CACHE_SIZE="16m"
+        INFRA_HOSTS=25000;       OUTGOING_RANGE=2048;   QUERIES_PER_THREAD=1024; NEG_CACHE_SIZE="16m"; KEY_CACHE_SIZE="16m"; VAL_CACHE_SIZE="16m"
     else
         RRSET_CACHE_SIZE="256m"; MSG_CACHE_SIZE="128m"; SO_RCVBUF="4m"; SO_SNDBUF="4m"
-        INFRA_HOSTS=50000;       OUTGOING_RANGE=4096;   QUERIES_PER_THREAD=2048; NEG_CACHE_SIZE="32m"
+        INFRA_HOSTS=50000;       OUTGOING_RANGE=4096;   QUERIES_PER_THREAD=2048; NEG_CACHE_SIZE="32m"; KEY_CACHE_SIZE="32m"; VAL_CACHE_SIZE="32m"
     fi
 
     CACHE_MIN_TTL=120
     CACHE_MAX_TTL=86400
     SERVE_EXPIRED_TTL=86400
-    SERVE_EXPIRED_CLIENT_TIMEOUT=0
 }
 
 install_unbound() {
@@ -509,7 +515,12 @@ ${anchor_directive}
     key-cache-slabs: ${CACHE_SLABS}
     rrset-cache-size: ${RRSET_CACHE_SIZE}
     msg-cache-size: ${MSG_CACHE_SIZE}
+    key-cache-size: ${KEY_CACHE_SIZE}
+    val-cache-size: ${VAL_CACHE_SIZE}
     neg-cache-size: ${NEG_CACHE_SIZE}
+
+    jostle-timeout: 200
+    target-fetch-policy: "2 1 0 0 0 0"
 
     # --- Réseau ---
     so-reuseport: yes
@@ -528,7 +539,7 @@ ${anchor_directive}
     cache-max-ttl: ${CACHE_MAX_TTL}
     serve-expired: yes
     serve-expired-ttl: ${SERVE_EXPIRED_TTL}
-    serve-expired-client-timeout: ${SERVE_EXPIRED_CLIENT_TIMEOUT}
+    serve-expired-client-timeout: 1800
     serve-expired-reply-ttl: 30
     prefetch: yes
     prefetch-key: yes

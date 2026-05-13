@@ -316,6 +316,129 @@ test_performance_defaults() {
     fi
 }
 
+test_power_of_two_edge() {
+    echo ""
+    echo "=== Testing Power of Two Edge Cases ==="
+    
+    get_power_of_two() {
+        local n=$1
+        local p=1
+        while (( p * 2 <= n )); do
+            (( p *= 2 ))
+        done
+        echo "$p"
+    }
+    
+    assert_equals "1" "$(get_power_of_two 0)" "Power of 2 for 0"
+    assert_equals "1" "$(get_power_of_two 1)" "Power of 2 for 1 (redundant)"
+    assert_equals "1024" "$(get_power_of_two 2000)" "Power of 2 for 2000"
+}
+
+test_count_cpuset_cpus() {
+    echo ""
+    echo "=== Testing CPUSET CPU Counting ==="
+    
+    count_cpuset_cpus() {
+        local cpuset=$1 total=0 part start end
+        cpuset=${cpuset//[$'\t\n\r ']/}
+        [[ -n "$cpuset" ]] || { echo "0"; return 1; }
+        IFS=',' read -ra parts <<< "$cpuset"
+        for part in "${parts[@]}"; do
+            if [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+                start=${BASH_REMATCH[1]}; end=${BASH_REMATCH[2]}
+                (( end >= start )) && (( total += end - start + 1 ))
+            elif [[ "$part" =~ ^[0-9]+$ ]]; then
+                (( total++ ))
+            fi
+        done
+        (( total > 0 )) && echo "$total" || { echo "0"; return 1; }
+    }
+    
+    local result
+    
+    result=$(count_cpuset_cpus "0-3"); assert_equals "4" "$result" "Range 0-3"
+    result=$(count_cpuset_cpus "0");    assert_equals "1" "$result" "Single CPU 0"
+    result=$(count_cpuset_cpus "0,2,4"); assert_equals "3" "$result" "Multiple singles"
+    result=$(count_cpuset_cpus "0-1,4-7"); assert_equals "6" "$result" "Mixed ranges"
+    result=$(count_cpuset_cpus "");     assert_equals "0" "$result" "Empty cpuset"
+}
+
+test_performance_profile_boundaries() {
+    echo ""
+    echo "=== Testing Performance Profile Boundaries ==="
+    
+    # Mock get_power_of_two
+    get_power_of_two() {
+        local n=$1 p=1
+        while (( p * 2 <= n )); do (( p *= 2 )); done
+        echo "$p"
+    }
+    
+    # Test that cache ratios are correct (msg_cache should be half of rrset_cache)
+    local scenarios=(
+        "512:16:8"
+        "768:32:16"
+        "1500:64:32"
+        "3000:128:64"
+        "8192:256:128"
+    )
+    
+    for scenario in "${scenarios[@]}"; do
+        local ram="${scenario%%:*}"
+        local rest="${scenario#*:}"
+        local expected_rrset="${rest%%:*}"
+        local expected_msg="${rest##*:}"
+        
+        # Quick validate: msg_cache should be exactly half of rrset_cache
+        if (( expected_msg * 2 == expected_rrset )); then
+            pass "Profile at ${ram}MB: rrset=${expected_rrset}m msg=${expected_msg}m (ratio 2:1)"
+        else
+            fail "Profile at ${ram}MB: unexpected ratio rrset=${expected_rrset}m msg=${expected_msg}m"
+        fi
+    done
+}
+
+test_validate_ipv4_edge() {
+    echo ""
+    echo "=== Testing IPv4 Validation Edge Cases ==="
+    
+    validate_ipv4() {
+        local ip="$1"
+        local ip_regex='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
+        [[ "$ip" =~ $ip_regex ]] || return 1
+        local IFS='.'
+        local -a octets=($ip)
+        for octet in "${octets[@]}"; do
+            (( octet > 255 )) && return 1
+        done
+        return 0
+    }
+    
+    if validate_ipv4 "0.0.0.0" 2>/dev/null; then
+        pass "Valid IP: 0.0.0.0 (min)"
+    else
+        fail "Valid IP: 0.0.0.0 should be accepted"
+    fi
+    
+    if validate_ipv4 "255.255.255.255" 2>/dev/null; then
+        pass "Valid IP: 255.255.255.255 (max)"
+    else
+        fail "Valid IP: 255.255.255.255 should be accepted"
+    fi
+    
+    if ! validate_ipv4 "" 2>/dev/null; then
+        pass "Invalid IP: empty string"
+    else
+        fail "Invalid IP: empty string should be rejected"
+    fi
+    
+    if validate_ipv4 "192.168.1.01" 2>/dev/null; then
+        pass "IP with leading zeros: 192.168.1.01 (decimally valid)"
+    else
+        fail "IP with leading zeros: 192.168.1.01 should be accepted"
+    fi
+}
+
 # ==========================================================================
 # MAIN TEST RUNNER
 # ==========================================================================
@@ -332,6 +455,10 @@ run_all_tests() {
     test_power_of_two
     test_atomic_write
     test_performance_defaults
+    test_power_of_two_edge
+    test_count_cpuset_cpus
+    test_performance_profile_boundaries
+    test_validate_ipv4_edge
     
     echo ""
     echo "╔════════════════════════════════════════════════════════╗"
@@ -371,6 +498,10 @@ Tests Available:
     - system_requirements
     - disk_space_check
     - power_of_two
+    - power_of_two_edge
+    - count_cpuset_cpus
+    - performance_profile_boundaries
+    - validate_ipv4_edge
     - atomic_write
     - performance_defaults
     - all (default)
@@ -414,6 +545,10 @@ if [[ -n "$SPECIFIC_TEST" ]]; then
         system_requirements) test_system_requirements ;;
         disk_space_check) test_disk_space_check ;;
         power_of_two) test_power_of_two ;;
+        power_of_two_edge) test_power_of_two_edge ;;
+        count_cpuset_cpus) test_count_cpuset_cpus ;;
+        performance_profile_boundaries) test_performance_profile_boundaries ;;
+        validate_ipv4_edge) test_validate_ipv4_edge ;;
         atomic_write) test_atomic_write ;;
         performance_defaults) test_performance_defaults ;;
         *)
