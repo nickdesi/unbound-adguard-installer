@@ -267,9 +267,9 @@ EOF
         awk 'BEGIN {
             v["num-threads"]="Threads"; v["msg-cache-slabs"]="Cache Slabs"
             v["rrset-cache-size"]="RRset Cache"; v["msg-cache-size"]="Msg Cache"
-            v["key-cache-size"]="Key Cache"; v["val-cache-size"]="Val Cache"
+            v["key-cache-size"]="Key Cache"
         }
-        /^\s*(num-threads|msg-cache-slabs|rrset-cache-size|msg-cache-size|key-cache-size|val-cache-size):/ {
+        /^\s*(num-threads|msg-cache-slabs|rrset-cache-size|msg-cache-size|key-cache-size):/ {
             print v[$1]": "$2
         }' /etc/unbound/unbound.conf >> "$report_file"
     fi
