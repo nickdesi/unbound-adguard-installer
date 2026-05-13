@@ -396,14 +396,20 @@ calculate_optimized_settings() {
         if ! whiptail --title "Ressources systeme" --yesno \
             "Detecte : ${CPU_CORES} CPU, ${RAM_MB} MB RAM.\n\nUtiliser ces valeurs pour l'auto-configuration ?" 10 60; then
             local user_cpu user_ram
-            if user_cpu=$(whiptail --inputbox "Nombre de coeurs CPU :" 8 40 "$CPU_CORES" 3>&1 1>&2 2>&3); then
+            if user_cpu=$(
+                trap - ERR
+                whiptail --inputbox "Nombre de coeurs CPU :" 8 40 "$CPU_CORES" 3>&1 1>&2 2>&3
+            ); then
                 if [[ "$user_cpu" =~ ^[0-9]+$ ]] && (( user_cpu > 0 && user_cpu <= 256 )); then
                     CPU_CORES=$user_cpu
                 else
                     msg_warn "Valeur CPU invalide. Valeur détectée conservée ($CPU_CORES)."
                 fi
             fi
-            if user_ram=$(whiptail --inputbox "RAM en MB :" 8 40 "$RAM_MB" 3>&1 1>&2 2>&3); then
+            if user_ram=$(
+                trap - ERR
+                whiptail --inputbox "RAM en MB :" 8 40 "$RAM_MB" 3>&1 1>&2 2>&3
+            ); then
                 if [[ "$user_ram" =~ ^[0-9]+$ ]] && (( user_ram >= 64 && user_ram <= 1048576 )); then
                     RAM_MB=$user_ram
                 else
@@ -752,24 +758,33 @@ reset_adguard_password() {
     fi
 
     local username password password_confirm password_hash
-    username=$(whiptail \
+    username=$(
+        trap - ERR
+        whiptail \
         --title " Reset mot de passe AdGuard " \
         --inputbox "Utilisateur AdGuard a reinitialiser :" 9 58 "admin" \
-        3>&1 1>&2 2>&3) || return 1
+        3>&1 1>&2 2>&3
+    ) || return 1
 
     if [[ -z "$username" ]]; then
         whiptail --title " Reset annule " --msgbox "Le nom d'utilisateur ne peut pas etre vide." 8 54
         return 1
     fi
 
-    password=$(whiptail \
+    password=$(
+        trap - ERR
+        whiptail \
         --title " Nouveau mot de passe " \
         --passwordbox "Saisissez le nouveau mot de passe :" 9 58 \
-        3>&1 1>&2 2>&3) || return 1
-    password_confirm=$(whiptail \
+        3>&1 1>&2 2>&3
+    ) || return 1
+    password_confirm=$(
+        trap - ERR
+        whiptail \
         --title " Confirmation " \
         --passwordbox "Confirmez le nouveau mot de passe :" 9 58 \
-        3>&1 1>&2 2>&3) || return 1
+        3>&1 1>&2 2>&3
+    ) || return 1
 
     if [[ -z "$password" ]]; then
         whiptail --title " Reset annule " --msgbox "Le mot de passe ne peut pas etre vide." 8 54
@@ -873,7 +888,9 @@ select_upstream() {
     esac
 
     local choice
-    choice=$(whiptail \
+    choice=$(
+        trap - ERR
+        whiptail \
         --title " DNS-over-TLS Upstream (port 853) " \
         --ok-button "Confirmer" \
         --cancel-button "Annuler" \
@@ -882,7 +899,8 @@ select_upstream() {
         "quad9"      "Quad9        9.9.9.9         - DNSSEC strict, anti-menaces" "$q9_tag" \
         "google"     "Google       8.8.8.8         - Universel, haute dispo"      "$gg_tag" \
         "adguard"    "AdGuard DNS  94.140.14.14    - Anti-pub et trackers natif"   "$ag_tag" \
-        3>&1 1>&2 2>&3) || return 1
+        3>&1 1>&2 2>&3
+    ) || return 1
     [[ -n "$choice" ]] && SELECTED_UPSTREAM="$choice"
     log "Upstream sélectionné: ${SELECTED_UPSTREAM}"
 }
@@ -932,7 +950,9 @@ show_menu() {
             label_install="Reinstaller            Ecraser l'installation existante"
         fi
 
-        choice=$(whiptail \
+        choice=$(
+            trap - ERR
+            whiptail \
             --title " AdGuard Home + Unbound  v${SCRIPT_VERSION} " \
             --cancel-button "Quitter" \
             --ok-button "Choisir" \
@@ -946,7 +966,8 @@ show_menu() {
             "7" "  Reset mot de passe       AdGuard Home" \
             "8" "  Desinstaller             Supprimer AdGuard Home + Unbound" \
             "9" "  Quitter" \
-            3>&1 1>&2 2>&3) || exit 0
+            3>&1 1>&2 2>&3
+        ) || exit 0
 
         case $choice in
                 1)
