@@ -393,7 +393,7 @@ calculate_optimized_settings() {
 
     if [[ "$INTERACTIVE" == "true" ]]; then
         if ! whiptail --title "Ressources systeme" --yesno \
-            "Détecté : ${CPU_CORES} CPU, ${RAM_MB} MB RAM.\n\nUtiliser ces valeurs pour l'auto-configuration ?" 10 60; then
+            "Detecte : ${CPU_CORES} CPU, ${RAM_MB} MB RAM.\n\nUtiliser ces valeurs pour l'auto-configuration ?" 10 60; then
             local user_cpu user_ram
             if user_cpu=$(whiptail --inputbox "Nombre de coeurs CPU :" 8 40 "$CPU_CORES" 3>&1 1>&2 2>&3); then
                 if [[ "$user_cpu" =~ ^[0-9]+$ ]] && (( user_cpu > 0 && user_cpu <= 256 )); then
@@ -753,11 +753,11 @@ reset_adguard_password() {
     local username password password_confirm password_hash
     username=$(whiptail \
         --title " Reset mot de passe AdGuard " \
-        --inputbox "Utilisateur AdGuard à réinitialiser :" 9 58 "admin" \
+        --inputbox "Utilisateur AdGuard a reinitialiser :" 9 58 "admin" \
         3>&1 1>&2 2>&3) || return 1
 
     if [[ -z "$username" ]]; then
-        whiptail --title " Reset annule " --msgbox "Le nom d'utilisateur ne peut pas être vide." 8 54
+        whiptail --title " Reset annule " --msgbox "Le nom d'utilisateur ne peut pas etre vide." 8 54
         return 1
     fi
 
@@ -771,7 +771,7 @@ reset_adguard_password() {
         3>&1 1>&2 2>&3) || return 1
 
     if [[ -z "$password" ]]; then
-        whiptail --title " Reset annule " --msgbox "Le mot de passe ne peut pas être vide." 8 54
+        whiptail --title " Reset annule " --msgbox "Le mot de passe ne peut pas etre vide." 8 54
         return 1
     fi
 
@@ -840,7 +840,7 @@ PYTHON
 
 uninstall_all() {
     if ! whiptail --title "Desinstallation" --yesno \
-        "Voulez-vous vraiment désinstaller AdGuard Home et Unbound ?\nLes fichiers de configuration seront supprimés." 10 60; then
+        "Voulez-vous vraiment desinstaller AdGuard Home et Unbound ?\nLes fichiers de configuration seront supprimes." 10 60; then
         return 0
     fi
 
@@ -966,10 +966,10 @@ show_menu() {
                 STEP_TOTAL=0; STEP_CURRENT=0
                 if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]] && run_full_health_check &>/dev/null; then
                     whiptail --title " Installation reussie " \
-                        --msgbox "Tous les services sont actifs et vérifiés.\n\n  Upstream DNS : ${SELECTED_UPSTREAM}\n  AdGuard Home : http://${local_ip}:${agh_port}\n  Unbound      : port ${UNBOUND_PORT} (DoT)\n\nConsultez les logs : ${LOG_FILE}" 14 62
+                        --msgbox "Tous les services sont actifs et verifies.\n\n  Upstream DNS : ${SELECTED_UPSTREAM}\n  AdGuard Home : http://${local_ip}:${agh_port}\n  Unbound      : port ${UNBOUND_PORT} (DoT)\n\nConsultez les logs : ${LOG_FILE}" 14 62
                 else
                     whiptail --title " Installation terminee " \
-                        --msgbox "Installation terminée (health check non concluant).\n\n  AdGuard Home : http://${local_ip}:${agh_port}\n  Upstream DNS : ${SELECTED_UPSTREAM}\n\nConsultez les logs : ${LOG_FILE}" 13 62
+                        --msgbox "Installation terminee (health check non concluant).\n\n  AdGuard Home : http://${local_ip}:${agh_port}\n  Upstream DNS : ${SELECTED_UPSTREAM}\n\nConsultez les logs : ${LOG_FILE}" 13 62
                 fi
                 ;;
             2)
@@ -977,7 +977,7 @@ show_menu() {
                 install_unbound
                 configure_adguard_upstream
                 whiptail --title " Reconfiguration appliquee " \
-                    --msgbox "Unbound et AdGuard Home ont été reconfigurés.\n\n  Upstream actif : ${SELECTED_UPSTREAM}\n  Port Unbound   : ${UNBOUND_PORT}" 11 58
+                    --msgbox "Unbound et AdGuard Home ont ete reconfigures.\n\n  Upstream actif : ${SELECTED_UPSTREAM}\n  Port Unbound   : ${UNBOUND_PORT}" 11 58
                 ;;
             3)
                 if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]]; then
@@ -1012,19 +1012,19 @@ show_menu() {
                 apt-get update -qq && apt-get upgrade -y -qq --no-install-recommends
                 msg_ok "Système à jour"
                 whiptail --title " MAJ systeme " \
-                    --msgbox "apt update + upgrade terminés avec succès." 8 50
+                    --msgbox "apt update + upgrade termines avec succes." 8 50
                 ;;
             6) update_script ;;
             7)
                 if reset_adguard_password; then
                     whiptail --title " Reset mot de passe " \
-                        --msgbox "Mot de passe AdGuard Home mis à jour.\n\nReconnectez-vous à l'interface web avec le nouveau mot de passe." 10 62
+                        --msgbox "Mot de passe AdGuard Home mis a jour.\n\nReconnectez-vous a l'interface web avec le nouveau mot de passe." 10 62
                 fi
                 ;;
             8)
                 if whiptail \
                     --title " Desinstallation " \
-                    --yesno "Désinstaller AdGuard Home et Unbound ?\n\nTous les fichiers de configuration seront supprimés.\nCette action est irréversible." 12 60; then
+                    --yesno "Desinstaller AdGuard Home et Unbound ?\n\nTous les fichiers de configuration seront supprimes.\nCette action est irreversible." 12 60; then
                     uninstall_all
                 fi
                 ;;
