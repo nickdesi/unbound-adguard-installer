@@ -77,6 +77,13 @@ run_cmd() {
     fi
 }
 
+# Whiptail helper — disables ERR trap inside subshell (Cancel returns 1)
+# Usage: var=$(whiptail_safe --title "..." --menu "..." ...) || return 1
+whiptail_safe() {
+    trap - ERR
+    whiptail "$@" 3>&1 1>&2 2>&3
+}
+
 header_info() {
     clear
     cat <<"EOF"
@@ -126,6 +133,7 @@ check_root() {
 
 check_os() {
     if [[ -f /etc/os-release ]]; then
+        # shellcheck disable=SC1091
         . /etc/os-release
         if [[ "$ID" != "debian" && "$ID" != "ubuntu" ]]; then
             msg_error "OS non supporté: $ID (Debian/Ubuntu requis)"
@@ -211,7 +219,11 @@ refresh_root_hints_if_needed() {
 
     if (( file_age > max_age_seconds )); then
         msg_info "Mise à jour root hints (cache ${ROOT_HINTS_MAX_AGE_DAYS}j)"
-        download_with_retry "https://www.internic.net/domain/named.cache" "$ROOT_HINTS_FILE" 3 >/dev/null && msg_ok "Root hints à jour" || msg_warn "Root hints non mis à jour"
+        if download_with_retry "https://www.internic.net/domain/named.cache" "$ROOT_HINTS_FILE" 3 >/dev/null; then
+            msg_ok "Root hints à jour"
+        else
+            msg_warn "Root hints non mis à jour"
+        fi
     fi
 }
 
@@ -396,20 +408,14 @@ calculate_optimized_settings() {
         if ! whiptail --title "Ressources systeme" --yesno \
             "Detecte : ${CPU_CORES} CPU, ${RAM_MB} MB RAM.\n\nUtiliser ces valeurs pour l'auto-configuration ?" 10 60; then
             local user_cpu user_ram
-            if user_cpu=$(
-                trap - ERR
-                whiptail --inputbox "Nombre de coeurs CPU :" 8 40 "$CPU_CORES" 3>&1 1>&2 2>&3
-            ); then
+            if user_cpu=$(whiptail_safe --inputbox "Nombre de coeurs CPU :" 8 40 "$CPU_CORES"); then
                 if [[ "$user_cpu" =~ ^[0-9]+$ ]] && (( user_cpu > 0 && user_cpu <= 256 )); then
                     CPU_CORES=$user_cpu
                 else
                     msg_warn "Valeur CPU invalide. Valeur détectée conservée ($CPU_CORES)."
                 fi
             fi
-            if user_ram=$(
-                trap - ERR
-                whiptail --inputbox "RAM en MB :" 8 40 "$RAM_MB" 3>&1 1>&2 2>&3
-            ); then
+            if user_ram=$(whiptail_safe --inputbox "RAM en MB :" 8 40 "$RAM_MB"); then
                 if [[ "$user_ram" =~ ^[0-9]+$ ]] && (( user_ram >= 64 && user_ram <= 1048576 )); then
                     RAM_MB=$user_ram
                 else
@@ -593,33 +599,23 @@ EOF
         mv "${UNBOUND_CONF_NEW}.tmp" "$UNBOUND_CONF_NEW"
     fi
 
-    refresh_root_hints_if_needed &
-    local _root_hints_pid=$!
-
-    if [[ ! -f "/etc/unbound/unbound_server.key" ]] && [[ "$DRY_RUN" != "true" ]]; then
-        msg_info "Génération des clés de contrôle Unbound"
-        unbound-control-setup &>/dev/null || true
-    fi
-
-    if [[ "$DRY_RUN" != "true" ]]; then
-        [[ -s "$UNBOUND_TRUST_ANCHOR" ]] || repair_unbound_trust_anchor || true
-        chown -R unbound:unbound /etc/unbound /var/lib/unbound
-        chmod 755 /etc/unbound /etc/unbound/unbound.conf.d /var/lib/unbound
-        chmod 640 /etc/unbound/unbound_control.* 2>/dev/null || true
-        chmod 644 "$ROOT_HINTS_FILE" 2>/dev/null || true
-    fi
-
-    local _rh_timeout=0
-    while kill -0 "${_root_hints_pid:-}" 2>/dev/null && (( _rh_timeout < 30 )); do
-        sleep 1; (( _rh_timeout++ ))
-    done
-    kill "${_root_hints_pid:-}" 2>/dev/null || true
-    wait "${_root_hints_pid:-}" 2>/dev/null || true
-
     if [[ "$DRY_RUN" == "true" ]]; then
         msg_ok "[DRY-RUN] Configuration Unbound simulée"
         return 0
     fi
+
+    refresh_root_hints_if_needed
+
+    if [[ ! -f "/etc/unbound/unbound_server.key" ]]; then
+        msg_info "Génération des clés de contrôle Unbound"
+        unbound-control-setup &>/dev/null || true
+    fi
+
+    [[ -s "$UNBOUND_TRUST_ANCHOR" ]] || repair_unbound_trust_anchor || true
+    chown -R unbound:unbound /etc/unbound /var/lib/unbound
+    chmod 755 /etc/unbound /etc/unbound/unbound.conf.d /var/lib/unbound
+    chmod 640 /etc/unbound/unbound_control.* 2>/dev/null || true
+    chmod 644 "$ROOT_HINTS_FILE" 2>/dev/null || true
 
     local checkconf_output=""
     local checkconf_ok=false
@@ -750,7 +746,11 @@ install_adguard_home() {
         msg_ok "AdGuard Home v${LATEST_VER} installé et lié à Unbound"
         if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]]; then
             msg_info "Health check post-installation..."
-            check_adguard_health &>/dev/null && msg_ok "Health check: OK" || msg_warn "Health check: voir logs"
+            if check_adguard_health &>/dev/null; then
+                msg_ok "Health check: OK"
+            else
+                msg_warn "Health check: voir logs"
+            fi
         fi
     else
         msg_warn "Fichier YAML non trouvé, configuration manuelle requise"
@@ -765,33 +765,21 @@ reset_adguard_password() {
     fi
 
     local username password password_confirm password_hash
-    username=$(
-        trap - ERR
-        whiptail \
+    username=$(whiptail_safe \
         --title " Reset mot de passe AdGuard " \
-        --inputbox "Utilisateur AdGuard a reinitialiser :" 9 58 "admin" \
-        3>&1 1>&2 2>&3
-    ) || return 1
+        --inputbox "Utilisateur AdGuard a reinitialiser :" 9 58 "admin") || return 1
 
     if [[ -z "$username" ]]; then
         whiptail --title " Reset annule " --msgbox "Le nom d'utilisateur ne peut pas etre vide." 8 54
         return 1
     fi
 
-    password=$(
-        trap - ERR
-        whiptail \
+    password=$(whiptail_safe \
         --title " Nouveau mot de passe " \
-        --passwordbox "Saisissez le nouveau mot de passe :" 9 58 \
-        3>&1 1>&2 2>&3
-    ) || return 1
-    password_confirm=$(
-        trap - ERR
-        whiptail \
+        --passwordbox "Saisissez le nouveau mot de passe :" 9 58) || return 1
+    password_confirm=$(whiptail_safe \
         --title " Confirmation " \
-        --passwordbox "Confirmez le nouveau mot de passe :" 9 58 \
-        3>&1 1>&2 2>&3
-    ) || return 1
+        --passwordbox "Confirmez le nouveau mot de passe :" 9 58) || return 1
 
     if [[ -z "$password" ]]; then
         whiptail --title " Reset annule " --msgbox "Le mot de passe ne peut pas etre vide." 8 54
@@ -895,9 +883,7 @@ select_upstream() {
     esac
 
     local choice
-    choice=$(
-        trap - ERR
-        whiptail \
+    choice=$(whiptail_safe \
         --title " DNS-over-TLS Upstream (port 853) " \
         --ok-button "Confirmer" \
         --cancel-button "Annuler" \
@@ -905,9 +891,7 @@ select_upstream() {
         "cloudflare" "Cloudflare   1.1.1.1         - Rapide, sans log"              "$cf_tag" \
         "quad9"      "Quad9        9.9.9.9         - DNSSEC strict, anti-menaces" "$q9_tag" \
         "google"     "Google       8.8.8.8         - Universel, haute dispo"      "$gg_tag" \
-        "adguard"    "AdGuard DNS  94.140.14.14    - Anti-pub et trackers natif"   "$ag_tag" \
-        3>&1 1>&2 2>&3
-    ) || return 1
+        "adguard"    "AdGuard DNS  94.140.14.14    - Anti-pub et trackers natif"   "$ag_tag") || return 1
     [[ -n "$choice" ]] && SELECTED_UPSTREAM="$choice"
     log "Upstream sélectionné: ${SELECTED_UPSTREAM}"
 }
@@ -957,9 +941,7 @@ show_menu() {
             label_install="Reinstaller            Ecraser l'installation existante"
         fi
 
-        choice=$(
-            trap - ERR
-            whiptail \
+        choice=$(whiptail_safe \
             --title " AdGuard Home + Unbound  v${SCRIPT_VERSION} " \
             --cancel-button "Quitter" \
             --ok-button "Choisir" \
@@ -972,9 +954,7 @@ show_menu() {
             "6" "  MAJ Script               Depuis GitHub" \
             "7" "  Reset mot de passe       AdGuard Home" \
             "8" "  Desinstaller             Supprimer AdGuard Home + Unbound" \
-            "9" "  Quitter" \
-            3>&1 1>&2 2>&3
-        ) || exit 0
+            "9" "  Quitter") || exit 0
 
         case $choice in
                 1)
@@ -1111,7 +1091,11 @@ main() {
             *) args+=("$arg") ;;
         esac
     done
-    [[ ${#args[@]} -gt 0 ]] && set -- "${args[@]}" || set --
+    if [[ ${#args[@]} -gt 0 ]]; then
+        set -- "${args[@]}"
+    else
+        set --
+    fi
 
     [[ "$DRY_RUN" == "true" ]] && msg_warn "Mode DRY-RUN actif — aucune modification système ne sera effectuée."
 

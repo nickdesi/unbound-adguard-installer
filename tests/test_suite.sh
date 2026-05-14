@@ -17,8 +17,37 @@ readonly NC='\033[0m' # No Color
 # Source shared library for actual function implementations
 SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${SCRIPT_DIR_TEST}/../lib/common.sh" ]]; then
+    # shellcheck source=lib/common.sh
     source "${SCRIPT_DIR_TEST}/../lib/common.sh"
 fi
+
+# Mock functions from install_unbound_interactive.sh (not sourced by tests)
+get_power_of_two() {
+    local n=$1 p=1
+    while (( p * 2 <= n )); do (( p *= 2 )); done
+    echo "$p"
+}
+
+count_cpuset_cpus() {
+    local cpuset=$1 total=0 part start end
+    cpuset=${cpuset//[$'\t\n\r ']/}
+    [[ -n "$cpuset" ]] || { echo "0"; return 1; }
+    IFS=',' read -ra parts <<< "$cpuset"
+    for part in "${parts[@]}"; do
+        if [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            start=${BASH_REMATCH[1]}; end=${BASH_REMATCH[2]}
+            (( end >= start )) && (( total += end - start + 1 ))
+        elif [[ "$part" =~ ^[0-9]+$ ]]; then
+            (( total++ ))
+        fi
+    done
+    if (( total > 0 )); then
+        echo "$total"
+    else
+        echo "0"
+        return 1
+    fi
+}
 
 # Counters
 TESTS_PASSED=0
@@ -228,15 +257,6 @@ test_power_of_two() {
     echo ""
     echo "=== Testing Power of Two Calculation ==="
     
-    get_power_of_two() {
-        local n=$1
-        local p=1
-        while (( p * 2 <= n )); do
-            (( p *= 2 ))
-        done
-        echo "$p"
-    }
-    
     assert_equals "1" "$(get_power_of_two 1)" "Power of 2 for 1"
     assert_equals "2" "$(get_power_of_two 2)" "Power of 2 for 2"
     assert_equals "2" "$(get_power_of_two 3)" "Power of 2 for 3"
@@ -276,7 +296,8 @@ test_performance_defaults() {
     echo ""
     echo "=== Testing Performance Defaults ==="
 
-    local script="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/install_unbound_interactive.sh"
+    local script
+    script="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/install_unbound_interactive.sh"
 
     if grep -q 'cache-min-ttl:' "$script" && grep -q 'serve-expired-client-timeout:' "$script"; then
         pass "Unbound low-latency cache tuning present"
@@ -295,15 +316,6 @@ test_power_of_two_edge() {
     echo ""
     echo "=== Testing Power of Two Edge Cases ==="
     
-    get_power_of_two() {
-        local n=$1
-        local p=1
-        while (( p * 2 <= n )); do
-            (( p *= 2 ))
-        done
-        echo "$p"
-    }
-    
     assert_equals "1" "$(get_power_of_two 0)" "Power of 2 for 0"
     assert_equals "1" "$(get_power_of_two 1)" "Power of 2 for 1 (redundant)"
     assert_equals "1024" "$(get_power_of_two 2000)" "Power of 2 for 2000"
@@ -312,22 +324,6 @@ test_power_of_two_edge() {
 test_count_cpuset_cpus() {
     echo ""
     echo "=== Testing CPUSET CPU Counting ==="
-    
-    count_cpuset_cpus() {
-        local cpuset=$1 total=0 part start end
-        cpuset=${cpuset//[$'\t\n\r ']/}
-        [[ -n "$cpuset" ]] || { echo "0"; return 1; }
-        IFS=',' read -ra parts <<< "$cpuset"
-        for part in "${parts[@]}"; do
-            if [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
-                start=${BASH_REMATCH[1]}; end=${BASH_REMATCH[2]}
-                (( end >= start )) && (( total += end - start + 1 ))
-            elif [[ "$part" =~ ^[0-9]+$ ]]; then
-                (( total++ ))
-            fi
-        done
-        (( total > 0 )) && echo "$total" || { echo "0"; return 1; }
-    }
     
     local result
     
@@ -341,13 +337,6 @@ test_count_cpuset_cpus() {
 test_performance_profile_boundaries() {
     echo ""
     echo "=== Testing Performance Profile Boundaries ==="
-    
-    # Mock get_power_of_two
-    get_power_of_two() {
-        local n=$1 p=1
-        while (( p * 2 <= n )); do (( p *= 2 )); done
-        echo "$p"
-    }
     
     # Test that cache ratios are correct (msg_cache should be half of rrset_cache)
     local scenarios=(

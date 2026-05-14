@@ -7,7 +7,10 @@
 
 # Source common library
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[[ -f "${SCRIPT_DIR}/common.sh" ]] && source "${SCRIPT_DIR}/common.sh"
+if [[ -f "${SCRIPT_DIR}/common.sh" ]]; then
+    # shellcheck source=lib/common.sh
+    source "${SCRIPT_DIR}/common.sh"
+fi
 
 # ==========================================================================
 # DNS RESOLUTION TESTS
@@ -241,7 +244,8 @@ check_adguard_health() {
 # Generate performance report
 # Usage: generate_performance_report
 generate_performance_report() {
-    local report_file="/tmp/dns_performance_report_$(date +%s).txt"
+    local report_file
+    report_file="/tmp/dns_performance_report_$(date +%s).txt"
     local agh_port
     agh_port=$(get_adguard_web_port)
     

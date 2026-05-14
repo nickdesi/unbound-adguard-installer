@@ -26,7 +26,6 @@ readonly BFR="\\r\\033[K"
 readonly HOLD="-"
 readonly CM="${GN}✓${CL}"
 readonly CROSS="${RD}✗${CL}"
-readonly INFO="${BL}ℹ${CL}"
 readonly WARN="${YW}⚠${CL}"
 
 # Global UI State
@@ -173,7 +172,8 @@ validate_ipv4() {
     
     # Check each octet
     local IFS='.'
-    local -a octets=($ip)
+    local -a octets
+    read -r -a octets <<< "$ip"
     for octet in "${octets[@]}"; do
         if (( octet > 255 )); then
             return 1
@@ -347,7 +347,8 @@ safe_sed() {
     local file="$1"
     local pattern="$2"
     local replacement="$3"
-    local backup_suffix=".bak.$(date +%s)"
+    local backup_suffix
+    backup_suffix=".bak.$(date +%s)"
     
     if [[ ! -f "$file" ]]; then
         msg_error "Fichier inexistant: $file"
