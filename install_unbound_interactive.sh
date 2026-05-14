@@ -13,16 +13,46 @@
 
 # --- Safety & Error Handling ---
 set -Eeuo pipefail
+
+# --- Error Handling & Cleanup ---
+
+cleanup() {
+    rm -rf /tmp/agh_install /tmp/agh_update 2>/dev/null || true
+}
+
+error_handler() {
+    local exit_code="$1" line_number="$2" command="$3"
+    if command -v msg_error >/dev/null 2>&1; then
+        msg_error "Erreur ligne ${line_number}: '${command}' a échoué (code ${exit_code})"
+    else
+        echo "Erreur ligne ${line_number}: '${command}' a échoué (code ${exit_code})" >&2
+    fi
+}
+
 trap cleanup EXIT
 trap 'error_handler $? $LINENO $BASH_COMMAND' ERR
 
 # --- Load Shared Libraries (fail-fast) ---
 # common.sh est OBLIGATOIRE — le script ne peut pas fonctionner sans.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_SELF="${BASH_SOURCE[0]-}"
+if [[ -z "$SCRIPT_SELF" ]]; then
+    SCRIPT_SELF="${0:-}"
+fi
+
+if [[ -z "$SCRIPT_SELF" || "$SCRIPT_SELF" == "bash" || "$SCRIPT_SELF" == "-bash" ]]; then
+    echo "FATAL: exécution non supportée via 'bash -c' sur le script brut." >&2
+    echo "Utilisez setup.sh pour bootstrapper le dépôt complet :" >&2
+    echo "  bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/nickdesi/unbound-adguard-installer/main/setup.sh)\"" >&2
+    exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SELF")" && pwd)"
 
 if [[ ! -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
     echo "FATAL: lib/common.sh introuvable dans ${SCRIPT_DIR}/lib/" >&2
     echo "Assurez-vous de cloner le repo complet et non de télécharger le script seul." >&2
+    echo "Bootstrap recommandé :" >&2
+    echo "  bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/nickdesi/unbound-adguard-installer/main/setup.sh)\"" >&2
     exit 1
 fi
 source "${SCRIPT_DIR}/lib/common.sh"
@@ -55,17 +85,6 @@ DRY_RUN=false
 CPU_CORES=1
 RAM_MB=512
 ALLOW_PROXMOX_HOST=false
-
-# --- Error Handling & Cleanup ---
-
-cleanup() {
-    rm -rf /tmp/agh_install /tmp/agh_update 2>/dev/null || true
-}
-
-error_handler() {
-    local exit_code="$1" line_number="$2" command="$3"
-    msg_error "Erreur ligne ${line_number}: '${command}' a échoué (code ${exit_code})"
-}
 
 # --- Dry-run wrapper ---
 # Usage: run_cmd <cmd> [args...]
