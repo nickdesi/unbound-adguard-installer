@@ -123,6 +123,10 @@ Dans un LXC Debian/Ubuntu dédié :
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/nickdesi/unbound-adguard-installer/main/setup.sh)"
 ```
 
+> [!IMPORTANT]
+> N'utilisez pas `install_unbound_interactive.sh` directement en one-liner (`bash -c "$(curl ...install_unbound_interactive.sh)"`).
+> Le script principal dépend de fichiers dans `lib/`. Le bootstrap `setup.sh` télécharge le dépôt complet avant exécution.
+
 Avec options CLI, par exemple installation non interactive avec Quad9 :
 
 ```bash
