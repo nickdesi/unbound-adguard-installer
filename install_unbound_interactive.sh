@@ -893,6 +893,7 @@ uninstall_all() {
 
 select_upstream() {
     local cf_tag q9_tag gg_tag ag_tag
+    local term_cols term_lines menu_width menu_height list_height
     cf_tag="OFF"; q9_tag="OFF"; gg_tag="OFF"; ag_tag="OFF"
     case "$SELECTED_UPSTREAM" in
         cloudflare) cf_tag="ON" ;;
@@ -901,16 +902,29 @@ select_upstream() {
         adguard)    ag_tag="ON" ;;
     esac
 
+    term_cols=$(tput cols 2>/dev/null || echo 80)
+    term_lines=$(tput lines 2>/dev/null || echo 24)
+
+    menu_width=$((term_cols - 6))
+    (( menu_width > 90 )) && menu_width=90
+    (( menu_width < 56 )) && menu_width=56
+
+    menu_height=$((term_lines - 6))
+    (( menu_height > 20 )) && menu_height=20
+    (( menu_height < 13 )) && menu_height=13
+
+    list_height=4
+
     local choice
     choice=$(whiptail_safe \
         --title " DNS-over-TLS Upstream (port 853) " \
         --ok-button "Confirmer" \
         --cancel-button "Annuler" \
-        --radiolist "Choisissez le fournisseur upstream :\n(Espace pour selectionner, Entree pour confirmer)" 16 72 4 \
-        "cloudflare" "Cloudflare   1.1.1.1         - Rapide, sans log"              "$cf_tag" \
-        "quad9"      "Quad9        9.9.9.9         - DNSSEC strict, anti-menaces" "$q9_tag" \
-        "google"     "Google       8.8.8.8         - Universel, haute dispo"      "$gg_tag" \
-        "adguard"    "AdGuard DNS  94.140.14.14    - Anti-pub et trackers natif"   "$ag_tag") || return 1
+        --radiolist "Choisissez le fournisseur upstream :\n(Espace pour selectionner, Entree pour confirmer)" "$menu_height" "$menu_width" "$list_height" \
+        "cloudflare" "1.1.1.1   Rapide, sans log" "$cf_tag" \
+        "quad9"      "9.9.9.9   DNSSEC strict" "$q9_tag" \
+        "google"     "8.8.8.8   Universel" "$gg_tag" \
+        "adguard"    "94.140.14.14   Anti-pub/trackers" "$ag_tag") || return 1
     [[ -n "$choice" ]] && SELECTED_UPSTREAM="$choice"
     log "Upstream sélectionné: ${SELECTED_UPSTREAM}"
 }
