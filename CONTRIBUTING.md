@@ -16,7 +16,6 @@ Merci de votre intérêt pour améliorer ce projet ! Ce guide vous aidera à con
 ```
 unbound-adguard-installer/
 ├── install_unbound_interactive.sh  # Script principal
-├── migrate_dns_lxc.sh              # Script de migration
 ├── lib/
 │   ├── common.sh                   # Fonctions utilitaires communes
 │   └── health_checks.sh            # Tests de santé DNS
@@ -152,7 +151,6 @@ git checkout -b fix/correction-bug-xyz
 ```bash
 # Linting
 shellcheck install_unbound_interactive.sh
-shellcheck migrate_dns_lxc.sh
 
 # Tests
 ./tests/test_suite.sh

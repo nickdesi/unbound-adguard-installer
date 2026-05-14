@@ -133,33 +133,6 @@ PYTHON
 }
 ```
 
-### Exemple 4 : Valider configuration réseau dans migrate_dns_lxc.sh
-
-```bash
-# Source library
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/lib/common.sh"
-
-extract_network_config() {
-    # ... extraction IP existante ...
-    
-    # NOUVEAU : Validation IP
-    local ip_only="${SOURCE_IP%/*}"
-    if ! validate_ipv4 "$ip_only"; then
-        msg_error "IP source invalide: $ip_only"
-        exit 1
-    fi
-    
-    # NOUVEAU : Validation port si présent
-    if [[ -n "${SOURCE_PORT:-}" ]]; then
-        if ! validate_port "$SOURCE_PORT"; then
-            msg_error "Port invalide: $SOURCE_PORT"
-            exit 1
-        fi
-    fi
-}
-```
-
 ## 📋 Checklist d'Amélioration Progressive
 
 ### Phase 1 : Tests & Validation (Recommandé en premier)

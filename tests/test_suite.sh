@@ -14,6 +14,12 @@ readonly RED='\033[0;31m'
 readonly YELLOW='\033[1;33m'
 readonly NC='\033[0m' # No Color
 
+# Source shared library for actual function implementations
+SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR_TEST}/../lib/common.sh" ]]; then
+    source "${SCRIPT_DIR_TEST}/../lib/common.sh"
+fi
+
 # Counters
 TESTS_PASSED=0
 TESTS_FAILED=0
@@ -85,19 +91,7 @@ test_validate_ipv4() {
     echo ""
     echo "=== Testing IPv4 Validation ==="
     
-    # Source the common library (mock if needed)
-    validate_ipv4() {
-        local ip="$1"
-        local ip_regex='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
-        [[ "$ip" =~ $ip_regex ]] || return 1
-        
-        local IFS='.'
-        local -a octets=($ip)
-        for octet in "${octets[@]}"; do
-            (( octet > 255 )) && return 1
-        done
-        return 0
-    }
+    # Uses validate_ipv4 from lib/common.sh
     
     # Valid IPs
     if validate_ipv4 "192.168.1.1" 2>/dev/null; then
@@ -136,12 +130,7 @@ test_validate_port() {
     echo ""
     echo "=== Testing Port Validation ==="
     
-    validate_port() {
-        local port="$1"
-        [[ "$port" =~ ^[0-9]+$ ]] || return 1
-        (( port < 1 || port > 65535 )) && return 1
-        return 0
-    }
+    # Uses validate_port from lib/common.sh
     
     # Valid ports
     if validate_port "80"; then
@@ -221,13 +210,7 @@ test_disk_space_check() {
         return 0
     fi
     
-    check_disk_space() {
-        local path="$1"
-        local min_mb="$2"
-        local available_mb
-        available_mb=$(df -BM "$path" 2>/dev/null | awk 'NR==2 {gsub(/M/,"",$4); print $4}')
-        [[ -n "$available_mb" ]] && (( available_mb >= min_mb ))
-    }
+    # Uses check_disk_space from lib/common.sh
     
     # Should have at least 100MB free on /tmp
     if check_disk_space "/tmp" 100; then
@@ -271,15 +254,7 @@ test_atomic_write() {
     echo ""
     echo "=== Testing Atomic File Write ==="
     
-    atomic_write() {
-        local file_path="$1"
-        local content="$2"
-        local temp_file="${file_path}.tmp.$$"
-        
-        echo "$content" > "$temp_file" || return 1
-        mv "$temp_file" "$file_path" || { rm -f "$temp_file"; return 1; }
-        return 0
-    }
+    # Uses atomic_write from lib/common.sh
     
     local test_file="/tmp/test_atomic_$$"
     local test_content="Hello, World!"
@@ -402,17 +377,7 @@ test_validate_ipv4_edge() {
     echo ""
     echo "=== Testing IPv4 Validation Edge Cases ==="
     
-    validate_ipv4() {
-        local ip="$1"
-        local ip_regex='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
-        [[ "$ip" =~ $ip_regex ]] || return 1
-        local IFS='.'
-        local -a octets=($ip)
-        for octet in "${octets[@]}"; do
-            (( octet > 255 )) && return 1
-        done
-        return 0
-    }
+    # Uses validate_ipv4 from lib/common.sh
     
     if validate_ipv4 "0.0.0.0" 2>/dev/null; then
         pass "Valid IP: 0.0.0.0 (min)"

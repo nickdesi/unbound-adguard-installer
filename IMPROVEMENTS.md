@@ -191,48 +191,6 @@ configure_adguard_upstream() {
 
 ---
 
-### Recommandations pour `migrate_dns_lxc.sh`
-
-#### 1. Valider les IPs avant migration
-
-```bash
-extract_network_config() {
-    # ... extraction IP existante ...
-    
-    # Nouveau : Validation
-    local ip_only="${SOURCE_IP%/*}"
-    if ! validate_ipv4 "$ip_only"; then
-        msg_error "IP source invalide: $ip_only"
-        exit 1
-    fi
-}
-```
-
-#### 2. Vérifier espace disque avant migration
-
-```bash
-prepare_migration() {
-    # Nouveau : Vérification espace
-    if ! check_disk_space "/var/tmp" 100; then
-        msg_error "Espace insuffisant pour migration"
-        exit 1
-    fi
-}
-```
-
-#### 3. Health check post-migration
-
-```bash
-# À la fin du script
-finalize_migration() {
-    msg_info "Vérification finale..."
-    pct push "$TARGET_ID" lib/health_checks.sh /tmp/health_checks.sh
-    pct exec "$TARGET_ID" -- bash /tmp/health_checks.sh run_full_health_check
-}
-```
-
----
-
 ## 📊 Bénéfices des Améliorations
 
 ### ✅ Fiabilité

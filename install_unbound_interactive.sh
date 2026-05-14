@@ -434,20 +434,20 @@ calculate_optimized_settings() {
     (( CACHE_SLABS < 1 )) && CACHE_SLABS=1
 
     if (( RAM_MB <= 512 )); then
-        RRSET_CACHE_SIZE="16m";  MSG_CACHE_SIZE="8m";   SO_RCVBUF="1m"; SO_SNDBUF="1m"
-        INFRA_HOSTS=2000;        OUTGOING_RANGE=512;    QUERIES_PER_THREAD=256; NEG_CACHE_SIZE="1m"; KEY_CACHE_SIZE="2m"
+        RRSET_CACHE_SIZE="64m";  MSG_CACHE_SIZE="32m";   SO_RCVBUF="1m"; SO_SNDBUF="1m"
+        INFRA_HOSTS=4000;        OUTGOING_RANGE=512;     QUERIES_PER_THREAD=256; NEG_CACHE_SIZE="2m"; KEY_CACHE_SIZE="4m"
     elif (( RAM_MB < 1024 )); then
-        RRSET_CACHE_SIZE="32m";  MSG_CACHE_SIZE="16m";  SO_RCVBUF="1m"; SO_SNDBUF="1m"
-        INFRA_HOSTS=5000;        OUTGOING_RANGE=950;    QUERIES_PER_THREAD=512; NEG_CACHE_SIZE="2m"; KEY_CACHE_SIZE="4m"
+        RRSET_CACHE_SIZE="128m"; MSG_CACHE_SIZE="64m";   SO_RCVBUF="1m"; SO_SNDBUF="1m"
+        INFRA_HOSTS=10000;       OUTGOING_RANGE=950;     QUERIES_PER_THREAD=512; NEG_CACHE_SIZE="4m"; KEY_CACHE_SIZE="8m"
     elif (( RAM_MB < 2048 )); then
-        RRSET_CACHE_SIZE="64m";  MSG_CACHE_SIZE="32m";  SO_RCVBUF="2m"; SO_SNDBUF="2m"
-        INFRA_HOSTS=10000;       OUTGOING_RANGE=950;    QUERIES_PER_THREAD=512; NEG_CACHE_SIZE="4m"; KEY_CACHE_SIZE="8m"
+        RRSET_CACHE_SIZE="256m"; MSG_CACHE_SIZE="128m";  SO_RCVBUF="2m"; SO_SNDBUF="2m"
+        INFRA_HOSTS=20000;       OUTGOING_RANGE=950;     QUERIES_PER_THREAD=512; NEG_CACHE_SIZE="8m"; KEY_CACHE_SIZE="16m"
     elif (( RAM_MB < 4096 )); then
-        RRSET_CACHE_SIZE="128m"; MSG_CACHE_SIZE="64m";  SO_RCVBUF="4m"; SO_SNDBUF="4m"
-        INFRA_HOSTS=25000;       OUTGOING_RANGE=2048;   QUERIES_PER_THREAD=1024; NEG_CACHE_SIZE="16m"; KEY_CACHE_SIZE="16m"
+        RRSET_CACHE_SIZE="512m"; MSG_CACHE_SIZE="256m";  SO_RCVBUF="4m"; SO_SNDBUF="4m"
+        INFRA_HOSTS=40000;       OUTGOING_RANGE=2048;    QUERIES_PER_THREAD=1024; NEG_CACHE_SIZE="16m"; KEY_CACHE_SIZE="32m"
     else
-        RRSET_CACHE_SIZE="256m"; MSG_CACHE_SIZE="128m"; SO_RCVBUF="4m"; SO_SNDBUF="4m"
-        INFRA_HOSTS=50000;       OUTGOING_RANGE=4096;   QUERIES_PER_THREAD=2048; NEG_CACHE_SIZE="32m"; KEY_CACHE_SIZE="32m"
+        RRSET_CACHE_SIZE="1024m"; MSG_CACHE_SIZE="512m"; SO_RCVBUF="4m"; SO_SNDBUF="4m"
+        INFRA_HOSTS=75000;       OUTGOING_RANGE=4096;    QUERIES_PER_THREAD=2048; NEG_CACHE_SIZE="32m"; KEY_CACHE_SIZE="64m"
     fi
 
     CACHE_MIN_TTL=120
@@ -593,7 +593,11 @@ EOF
         mv "${UNBOUND_CONF_NEW}.tmp" "$UNBOUND_CONF_NEW"
     fi
 
-    refresh_root_hints_if_needed &
+    if command -v timeout &>/dev/null; then
+        timeout 30 refresh_root_hints_if_needed &
+    else
+        refresh_root_hints_if_needed &
+    fi
     local _root_hints_pid=$!
 
     if [[ ! -f "/etc/unbound/unbound_server.key" ]] && [[ "$DRY_RUN" != "true" ]]; then
@@ -710,8 +714,10 @@ install_adguard_home() {
             *) msg_error "Architecture non supportée: $ARCH"; exit 1 ;;
         esac
         msg_info "Récupération de la dernière version AdGuard Home..."
-        local LATEST_VER
-        LATEST_VER=$(fetch_json_api "https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest" | jq -r '.tag_name')
+        local LATEST_VER="${_AGH_VER:-}"
+        if [[ -z "$LATEST_VER" ]]; then
+            LATEST_VER=$(fetch_json_api "https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest" | jq -r '.tag_name')
+        fi
         if [[ -z "$LATEST_VER" || "$LATEST_VER" == "null" ]]; then
             msg_error "Impossible de trouver la dernière version AdGuard Home"
             exit 1
