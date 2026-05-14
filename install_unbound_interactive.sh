@@ -593,11 +593,7 @@ EOF
         mv "${UNBOUND_CONF_NEW}.tmp" "$UNBOUND_CONF_NEW"
     fi
 
-    if command -v timeout &>/dev/null; then
-        timeout 30 refresh_root_hints_if_needed &
-    else
-        refresh_root_hints_if_needed &
-    fi
+    refresh_root_hints_if_needed &
     local _root_hints_pid=$!
 
     if [[ ! -f "/etc/unbound/unbound_server.key" ]] && [[ "$DRY_RUN" != "true" ]]; then
@@ -613,6 +609,11 @@ EOF
         chmod 644 "$ROOT_HINTS_FILE" 2>/dev/null || true
     fi
 
+    local _rh_timeout=0
+    while kill -0 "${_root_hints_pid:-}" 2>/dev/null && (( _rh_timeout < 30 )); do
+        sleep 1; (( _rh_timeout++ ))
+    done
+    kill "${_root_hints_pid:-}" 2>/dev/null || true
     wait "${_root_hints_pid:-}" 2>/dev/null || true
 
     if [[ "$DRY_RUN" == "true" ]]; then
