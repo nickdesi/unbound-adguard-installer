@@ -533,7 +533,7 @@ EOF
         mv "${UNBOUND_CONF}.tmp" "$UNBOUND_CONF"
         cat > "${UNBOUND_CONF_NEW}.tmp" <<EOF
 server:
-    verbosity: 1
+    verbosity: 0
     interface: 127.0.0.1
     port: ${UNBOUND_PORT}
     do-ip4: yes
@@ -580,7 +580,7 @@ ${anchor_directive}
     serve-expired: yes
     serve-expired-ttl: ${SERVE_EXPIRED_TTL}
     serve-expired-client-timeout: 1800
-    serve-expired-reply-ttl: 30
+    serve-expired-reply-ttl: 60
     prefetch: yes
     prefetch-key: yes
     aggressive-nsec: yes
@@ -594,7 +594,7 @@ ${anchor_directive}
     harden-dnssec-stripped: yes
     harden-algo-downgrade: yes
     qname-minimisation: yes
-    use-caps-for-id: yes
+    use-caps-for-id: no
     private-address: 192.168.0.0/16
     private-address: 10.0.0.0/8
     private-address: 172.16.0.0/12
@@ -689,9 +689,9 @@ try:
         config = yaml.safe_load(f) or {}
     config.setdefault('dns', {})
     config['dns']['upstream_dns']  = ['127.0.0.1:${UNBOUND_PORT}']
-    config['dns']['bootstrap_dns'] = ['1.1.1.1', '9.9.9.9']
+    config['dns']['bootstrap_dns'] = ['1.1.1.1']
     config['dns']['enable_dnssec'] = True
-    config['dns']['cache_size'] = 4194304
+    config['dns']['cache_size'] = 0
     config['dns']['cache_ttl_min'] = max(int(config['dns'].get('cache_ttl_min') or 0), 120)
     config['dns']['cache_ttl_max'] = max(int(config['dns'].get('cache_ttl_max') or 0), 86400)
     config['dns']['optimistic_cache'] = True
