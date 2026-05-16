@@ -361,7 +361,7 @@ count_cpuset_cpus() {
             start=${BASH_REMATCH[1]}; end=${BASH_REMATCH[2]}
             (( end >= start )) && (( total += end - start + 1 ))
         elif [[ "$part" =~ ^[0-9]+$ ]]; then
-            (( total++ ))
+            total=$(( total + 1 ))
         fi
     done
     (( total > 0 )) && echo "$total"
@@ -719,11 +719,11 @@ prewarm_unbound_cache() {
     local count=0 warmed=0 failed=0
     for domain in "${domains[@]}"; do
         if dig @127.0.0.1 -p "${UNBOUND_PORT}" +short "${domain}" &>/dev/null; then
-            (( warmed++ ))
+            warmed=$(( warmed + 1 ))
         else
-            (( failed++ ))
+            failed=$(( failed + 1 ))
         fi
-        (( count++ ))
+        count=$(( count + 1 ))
     done
 
     msg_ok "Cache préchauffé: ${warmed}/${count} domaines résolus (${failed} échecs)"
