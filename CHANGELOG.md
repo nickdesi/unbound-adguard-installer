@@ -26,8 +26,6 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Corrigé
 - **Arithmetic increment** : `(( var++ ))` → `$(( var + 1 ))` (crash avec set -e quand var=0)
-- **Shellcheck** : clean à 100% (SC2034 cross-file globals)
-- **Agentmemory MCP** : config nettoyée (déplacée en global ~/.config/opencode/)
 
 ## [3.4.1] - 2026-05-16
 
