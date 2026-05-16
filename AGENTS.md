@@ -48,6 +48,14 @@ AdGuard Home (port 53, web UI :3000) ← upstream 127.0.0.1:5335 → Unbound (ca
 
 Unbound listens on `127.0.0.1:5335`. Generated config: `/etc/unbound/unbound.conf.d/99-adguard-unbound-installer.conf`. Logs: `/var/log/adguard-unbound-installer.log`.
 
+## Agent Memory (mandatory)
+
+After **every bug fix**, immediately save the lesson to agentmemory with `agentmemory_memory_lesson_save`:
+- `confidence: 1` (always)
+- Include: what broke, why, the fix, and the context
+- Tag with `bug`, `lesson-learned`, and relevant tech tags
+- This is **not optional** — do it before moving to the next task
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
