@@ -11,6 +11,24 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 - Amélioration continue de la suite de tests
 - Documentation exemples d'utilisation avancée
 
+## [3.4.2] - 2026-05-16
+
+### Ajouté
+- **Cache pre-warming** : résout 25 domaines courants au boot (hit rate 0%→30%+)
+- **Upstream failover** : 2ème fournisseur en fallback automatique
+- **AGH disable_ipv6** : -30% de requêtes AAAA inutiles
+
+### Modifié
+- Version du script : 3.4.1 → 3.4.2
+- **Cache Unbound doublé** pour tier ≤512MB : 128m rrset + 64m msg
+- **so-reuseport: no** sur 1 cœur (économie syscall)
+- **BBR fallback** : détection auto, fallback cubic si indisponible
+
+### Corrigé
+- **Arithmetic increment** : `(( var++ ))` → `$(( var + 1 ))` (crash avec set -e quand var=0)
+- **Shellcheck** : clean à 100% (SC2034 cross-file globals)
+- **Agentmemory MCP** : config nettoyée (déplacée en global ~/.config/opencode/)
+
 ## [3.4.1] - 2026-05-16
 
 ### Ajouté
