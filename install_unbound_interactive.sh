@@ -312,6 +312,12 @@ apply_sysctl_tuning() {
         echo "  [DRY-RUN] Écriture de $SYSCTL_CONF"
         return 0
     fi
+    local congestion="bbr"
+    if ! sysctl -q net.ipv4.tcp_congestion_control &>/dev/null 2>&1 || \
+       ! echo "bbr" | tee /proc/sys/net/ipv4/tcp_congestion_control &>/dev/null 2>&1; then
+        congestion="cubic"
+        msg_warn "BBR indisponible, fallback sur cubic"
+    fi
     cat > "$SYSCTL_CONF" <<EOF
 # Optimisations DNS (Généré par Installer v${SCRIPT_VERSION})
 net.core.rmem_max = 8388608
@@ -322,7 +328,7 @@ net.core.netdev_max_backlog = 50000
 net.ipv4.udp_mem = 65536 131072 262144
 net.ipv4.conf.all.accept_redirects = 0
 net.ipv6.conf.all.accept_redirects = 0
-net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_congestion_control = ${congestion}
 net.ipv4.tcp_fastopen = 3
 net.ipv4.tcp_slow_start_after_idle = 0
 net.core.optmem_max = 65536
@@ -478,6 +484,11 @@ calculate_optimized_settings() {
     CACHE_MIN_TTL=120
     CACHE_MAX_TTL=86400
     SERVE_EXPIRED_TTL=86400
+
+    SO_REUSEPORT="yes"
+    if (( NUM_THREADS == 1 )); then
+        SO_REUSEPORT="no"
+    fi
 }
 
 install_unbound() {
@@ -516,13 +527,28 @@ install_unbound() {
 
     msg_info "Génération de la configuration Unbound (Threads: $NUM_THREADS, Slabs: $CACHE_SLABS)"
 
-    local _UPSTREAM_LINES
+    local _UPSTREAM_LINES _UPSTREAM_BACKUP
     case "$SELECTED_UPSTREAM" in
-        cloudflare) _UPSTREAM_LINES=$'    forward-addr: 1.1.1.1@853#cloudflare-dns.com\n    forward-addr: 1.0.0.1@853#cloudflare-dns.com' ;;
-        quad9)      _UPSTREAM_LINES=$'    forward-addr: 9.9.9.9@853#dns.quad9.net\n    forward-addr: 149.112.112.112@853#dns.quad9.net' ;;
-        google)     _UPSTREAM_LINES=$'    forward-addr: 8.8.8.8@853#dns.google\n    forward-addr: 8.8.4.4@853#dns.google' ;;
-        adguard)    _UPSTREAM_LINES=$'    forward-addr: 94.140.14.14@853#dns.adguard.com\n    forward-addr: 94.140.15.15@853#dns.adguard.com' ;;
-        *)          _UPSTREAM_LINES=$'    forward-addr: 1.1.1.1@853#cloudflare-dns.com\n    forward-addr: 1.0.0.1@853#cloudflare-dns.com' ;;
+        cloudflare)
+            _UPSTREAM_LINES=$'    forward-addr: 1.1.1.1@853#cloudflare-dns.com\n    forward-addr: 1.0.0.1@853#cloudflare-dns.com'
+            _UPSTREAM_BACKUP=$'    forward-addr: 9.9.9.9@853#dns.quad9.net'
+            ;;
+        quad9)
+            _UPSTREAM_LINES=$'    forward-addr: 9.9.9.9@853#dns.quad9.net\n    forward-addr: 149.112.112.112@853#dns.quad9.net'
+            _UPSTREAM_BACKUP=$'    forward-addr: 1.1.1.1@853#cloudflare-dns.com'
+            ;;
+        google)
+            _UPSTREAM_LINES=$'    forward-addr: 8.8.8.8@853#dns.google\n    forward-addr: 8.8.4.4@853#dns.google'
+            _UPSTREAM_BACKUP=$'    forward-addr: 1.1.1.1@853#cloudflare-dns.com'
+            ;;
+        adguard)
+            _UPSTREAM_LINES=$'    forward-addr: 94.140.14.14@853#dns.adguard.com\n    forward-addr: 94.140.15.15@853#dns.adguard.com'
+            _UPSTREAM_BACKUP=$'    forward-addr: 1.1.1.1@853#cloudflare-dns.com'
+            ;;
+        *)
+            _UPSTREAM_LINES=$'    forward-addr: 1.1.1.1@853#cloudflare-dns.com\n    forward-addr: 1.0.0.1@853#cloudflare-dns.com'
+            _UPSTREAM_BACKUP=$'    forward-addr: 9.9.9.9@853#dns.quad9.net'
+            ;;
     esac
 
     if [[ "$DRY_RUN" != "true" ]]; then
@@ -563,7 +589,7 @@ ${anchor_directive}
     target-fetch-policy: "2 1 0 0 0 0"
 
     # --- Réseau ---
-    so-reuseport: yes
+    so-reuseport: ${SO_REUSEPORT}
     so-rcvbuf: ${SO_RCVBUF}
     so-sndbuf: ${SO_SNDBUF}
     edns-buffer-size: 1232
@@ -605,6 +631,7 @@ forward-zone:
     name: "."
     forward-tls-upstream: yes
     ${_UPSTREAM_LINES}
+    ${_UPSTREAM_BACKUP}
 
 remote-control:
     control-enable: yes
@@ -651,11 +678,55 @@ EOF
         systemctl enable unbound &>/dev/null
         restart_service_safely unbound 30 || { msg_error "Échec redémarrage sécurisé Unbound"; exit 1; }
         msg_ok "Configuration Unbound valide et service redémarré"
+
+        prewarm_unbound_cache
     else
         msg_error "Configuration Unbound invalide !"
         printf '%s\n' "$checkconf_output"
         exit 1
     fi
+}
+
+
+
+# --- Cache Pre-warming ---
+
+prewarm_unbound_cache() {
+    [[ "$DRY_RUN" == "true" ]] && { echo "  [DRY-RUN] Cache pre-warming"; return 0; }
+
+    msg_info "Préchauffage du cache Unbound..."
+
+    local domains=(
+        google.com www.google.com dns.google.com
+        cloudflare.com www.cloudflare.com 1.1.1.1
+        github.com api.github.com raw.githubusercontent.com
+        facebook.com www.facebook.com
+        amazon.com www.amazon.com aws.amazon.com
+        microsoft.com www.microsoft.com login.microsoftonline.com
+        apple.com www.apple.com icloud.com
+        netflix.com www.netflix.com
+        twitter.com x.com t.co
+        youtube.com www.youtube.com
+        wikipedia.org en.wikipedia.org
+        reddit.com www.reddit.com
+        stackoverflow.com cdn.sstatic.net
+        npmjs.com registry.npmjs.org
+        docker.com hub.docker.com
+        debian.org security.debian.org
+        ubuntu.com archive.ubuntu.com
+    )
+
+    local count=0 warmed=0 failed=0
+    for domain in "${domains[@]}"; do
+        if dig @127.0.0.1 -p "${UNBOUND_PORT}" +short "${domain}" &>/dev/null; then
+            (( warmed++ ))
+        else
+            (( failed++ ))
+        fi
+        (( count++ ))
+    done
+
+    msg_ok "Cache préchauffé: ${warmed}/${count} domaines résolus (${failed} échecs)"
 }
 
 
@@ -695,6 +766,7 @@ try:
     config['dns']['cache_ttl_min'] = max(int(config['dns'].get('cache_ttl_min') or 0), 120)
     config['dns']['cache_ttl_max'] = max(int(config['dns'].get('cache_ttl_max') or 0), 86400)
     config['dns']['optimistic_cache'] = True
+    config['dns']['disable_ipv6'] = True
     with open("$AGH_YAML", 'w') as f:
         yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
     print('OK')
