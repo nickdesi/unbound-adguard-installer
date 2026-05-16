@@ -6,10 +6,11 @@
   "mcp": {
     "agentmemory": {
       "type": "local",
-      "command": ["npx", "-y", "@agentmemory/mcp"],
+      "command": ["/opt/homebrew/bin/npx", "-y", "@agentmemory/mcp"],
       "enabled": true,
       "environment": {
-        "AGENTMEMORY_URL": "http://localhost:3111"
+        "AGENTMEMORY_URL": "http://localhost:3111",
+        "PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
       }
     }
   }
