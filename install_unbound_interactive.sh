@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034  # STEP_CURRENT/STEP_TOTAL used by lib/common.sh msg_info/msg_step
 
 # ==========================================================================
 # AdGuard Home & Unbound All-in-One Installer/Updater pour Proxmox LXC

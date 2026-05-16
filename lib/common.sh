@@ -30,7 +30,9 @@ readonly WARN="${YW}⚠${CL}"
 
 # Global UI State
 _OP_START=0
+# shellcheck disable=SC2034  # used by msg_info/msg_step across sourced files
 STEP_CURRENT=0
+# shellcheck disable=SC2034
 STEP_TOTAL=0
 
 wait_for_file() {
