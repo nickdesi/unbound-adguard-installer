@@ -50,11 +50,12 @@ Unbound listens on `127.0.0.1:5335`. Generated config: `/etc/unbound/unbound.con
 
 ## Agent Memory (mandatory)
 
-After **every bug fix**, immediately save the lesson to agentmemory with `agentmemory_memory_lesson_save`:
-- `confidence: 1` (always)
+After **every bug fix**, immediately save the lesson to agentmemory with `agentmemory_memory_save`:
+- `type: "pattern"` (for lessons/bugs) or `"decision"` (for architecture choices)
 - Include: what broke, why, the fix, and the context
-- Tag with `bug`, `lesson-learned`, and relevant tech tags
+- Tag concepts with `bug`, `lesson-learned`, and relevant tech tags
 - This is **not optional** — do it before moving to the next task
+- **Only use `memory_save`** — `memory_lesson_save` does not exist in the agentmemory API
 
 ## graphify
 
