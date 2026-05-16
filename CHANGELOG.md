@@ -11,6 +11,43 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 - Amélioration continue de la suite de tests
 - Documentation exemples d'utilisation avancée
 
+## [3.4.1] - 2026-05-16
+
+### Ajouté
+- **Plugin Graphify** pour OpenCode avec instructions AGENTS.md
+- **Option reset mot de passe** AdGuard Home dans le menu interactif
+- **Détection limites cgroup LXC** (CPU/RAM) pour auto-config précise
+- **Préfetch parallèle** AdGuard Home pendant l'installation Unbound
+
+### Modifié
+- Version du script : 3.2.5 → 3.4.1
+- **Cache Unbound doublé** pour tier ≤512MB : 128m rrset + 64m msg (was 64m/32m)
+  - Cache hit rate cible : ~50% (was 20.8%)
+- **Verbosité Unbound à 0** (économie CPU sur 1 cœur)
+- **use-caps-for-id: no** (élimine requêtes sortantes dupliquées, DoT+DNSSEC suffisent)
+- **serve-expired-reply-ttl: 60** (clients cachent 2× plus longtemps)
+- **AGH cache_size: 0** (Unbound gère seul le cache, pas de duplication)
+- **AGH bootstrap_dns** réduit à `1.1.1.1` (was 2 serveurs)
+- **Menu interactif modernisé** avec labels dynamiques selon état d'installation
+- **Flux d'installation simplifié** et durci
+
+### Corrigé
+- **Whiptail** : suppression du piège ERR dans les subshells (évite erreurs sur Cancel)
+- **Whiptail** : nettoyage accents dans les chaînes (prévient troncation et wrapping awk)
+- **Unbound** : suppression directive invalide `val-cache-size`
+- **DNSSEC** : réparation trust anchor pendant les diagnostics
+- **DNSSEC** : désactivation automatique des directives dupliquées
+- **DNSSEC** : scope de réparation limité (ne touche pas les configs externes)
+- **Root hints** : remplacement `timeout` externe par boucle bash native
+- **bash -c** : échec gracieux avec message de bootstrap recommandé
+- **Radiolist upstream** : adaptation aux petits terminaux
+- **gitignore** : ajout `data/` (artefacts runtime agentmemory)
+
+### Technique
+- Configuration MCP agentmemory avec chemin absolu npx (compatibilité OpenCode)
+- Tous les changements validés par shellcheck (0 warning/error)
+- Suite de tests : 42/42 passants
+
 ## [3.2.5] - 2026-04-12
 
 ### Ajouté
