@@ -70,10 +70,11 @@ Le script ajuste automatiquement Unbound selon les ressources du LXC :
 
 | Profil | RAM | Cache rrset | Cache msg | Usage visé |
 |--------|-----|-------------|-----------|------------|
-| Micro | < 512 MB | 16 MB | 8 MB | Petit lab |
-| Small | < 1 GB | 64 MB | 32 MB | Maison légère |
-| Medium | < 4 GB | 256 MB | 128 MB | Maison / homelab |
-| Premium | ≥ 4 GB | 512 MB | 256 MB | Réseau chargé |
+| Micro | ≤ 512 MB | 128 MB | 64 MB | Petit lab |
+| Small | < 1 GB | 192 MB | 96 MB | Maison légère |
+| Medium | < 2 GB | 256 MB | 128 MB | Maison / homelab |
+| Large | < 4 GB | 512 MB | 256 MB | Réseau actif |
+| Premium | ≥ 4 GB | 1024 MB | 512 MB | Réseau chargé |
 
 Optimisations incluses :
 

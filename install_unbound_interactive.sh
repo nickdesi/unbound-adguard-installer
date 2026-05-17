@@ -78,6 +78,8 @@ readonly UNBOUND_CONF="/etc/unbound/unbound.conf"
 readonly UNBOUND_CONF_NEW="/etc/unbound/unbound.conf.d/99-adguard-unbound-installer.conf"
 readonly UNBOUND_TRUST_ANCHOR="/var/lib/unbound/root.key"
 readonly DEFAULT_BENCHMARK_QUERIES=300
+readonly UPDATE_REPO="nickdesi/unbound-adguard-installer"
+readonly UPDATE_REF="main"
 
 # Global State Variables (mutable)
 INTERACTIVE=true
@@ -347,28 +349,6 @@ EOF
 }
 
 # --- Unbound Logic & Calculation ---
-
-get_power_of_two() {
-    local n=$1 p=1
-    while (( p * 2 <= n )); do (( p *= 2 )); done
-    echo "$p"
-}
-
-count_cpuset_cpus() {
-    local cpuset=$1 total=0 part start end
-    cpuset=${cpuset//[$'\t\n\r ']/}
-    [[ -n "$cpuset" ]] || return 1
-    IFS=',' read -ra parts <<< "$cpuset"
-    for part in "${parts[@]}"; do
-        if [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
-            start=${BASH_REMATCH[1]}; end=${BASH_REMATCH[2]}
-            (( end >= start )) && (( total += end - start + 1 ))
-        elif [[ "$part" =~ ^[0-9]+$ ]]; then
-            total=$(( total + 1 ))
-        fi
-    done
-    (( total > 0 )) && echo "$total"
-}
 
 get_cgroup_cpu_limit() {
     local quota period cpuset cpus
@@ -786,6 +766,8 @@ PYTHON
 }
 
 install_adguard_home() {
+    local LATEST_VER="${_AGH_VER:-inconnue}"
+
     if [[ -f "$AGH_BINARY" ]]; then
         msg_ok "AdGuard Home déjà installé (idempotent)"
         configure_adguard_upstream
@@ -796,16 +778,10 @@ install_adguard_home() {
 
     if [[ ! -f "/tmp/agh_install/AGH.tar.gz" ]]; then
         msg_info "Détection architecture..."
-        local ARCH AGH_ARCH
-        ARCH=$(uname -m)
-        case $ARCH in
-            x86_64)  AGH_ARCH="amd64"  ;;
-            aarch64) AGH_ARCH="arm64"  ;;
-            armv7l)  AGH_ARCH="armv7"  ;;
-            *) msg_error "Architecture non supportée: $ARCH"; exit 1 ;;
-        esac
+        local AGH_ARCH
+        AGH_ARCH=$(get_agh_arch) || { msg_error "Architecture non supportée: $(uname -m)"; exit 1; }
         msg_info "Récupération de la dernière version AdGuard Home..."
-        local LATEST_VER="${_AGH_VER:-}"
+        LATEST_VER="${_AGH_VER:-}"
         if [[ -z "$LATEST_VER" ]]; then
             LATEST_VER=$(fetch_json_api "https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest" | jq -r '.tag_name')
         fi
@@ -819,7 +795,7 @@ install_adguard_home() {
             msg_ok "[DRY-RUN] Téléchargement simulé: $url"
             return 0
         fi
-        download_with_retry "$url" "/tmp/agh_install/AGH.tar.gz" 3 || {
+        download_adguard_release_tarball "$LATEST_VER" "$AGH_ARCH" "/tmp/agh_install/AGH.tar.gz" || {
             msg_error "Échec téléchargement AdGuard Home"; return 1
         }
     elif [[ "$DRY_RUN" == "true" ]]; then
@@ -905,7 +881,7 @@ reset_adguard_password() {
 
     create_backup "$AGH_YAML" || true
 
-    AGH_RESET_USER="$username" AGH_RESET_HASH="$password_hash" python3 - <<'PYTHON'
+    AGH_YAML="$AGH_YAML" AGH_RESET_USER="$username" AGH_RESET_HASH="$password_hash" python3 - <<'PYTHON'
 import os
 import sys
 import yaml
@@ -1007,26 +983,64 @@ select_upstream() {
 }
 
 update_script() {
-    msg_info "Vérification de la mise à jour du script..."
-    local remote_url="https://raw.githubusercontent.com/nickdesi/unbound-adguard-installer/main/install_unbound_interactive.sh"
-    local new_file="${0}.new"
+    msg_info "Mise à jour du dépôt local (script + lib)..."
 
-    if curl -fsSL "$remote_url" -o "$new_file"; then
-        local remote_version
-        remote_version=$(grep -m1 'readonly SCRIPT_VERSION=' "$new_file" | cut -d'"' -f2)
-        if [[ -n "$remote_version" && "$remote_version" == "$SCRIPT_VERSION" ]]; then
-            msg_ok "Déjà à jour (v${SCRIPT_VERSION})"
-            rm -f "$new_file"
-            return 0
-        fi
-        chmod +x "$new_file"
-        mv "$new_file" "$0"
-        msg_ok "Mis à jour: v${SCRIPT_VERSION} → v${remote_version:-inconnue}. Relancez le script."
-        exit 0
-    else
-        msg_error "Échec du téléchargement de la mise à jour."
-        rm -f "$new_file"
+    local archive_url="https://codeload.github.com/${UPDATE_REPO}/tar.gz/${UPDATE_REF}"
+    local tmp_dir tmp_tar remote_version remote_sha local_sha
+    tmp_dir=$(mktemp -d /tmp/agh_update.XXXXXX)
+    tmp_tar="${tmp_dir}/repo.tar.gz"
+
+    if ! download_with_retry "$archive_url" "$tmp_tar" 3; then
+        msg_error "Échec du téléchargement de la mise à jour"
+        rm -rf "$tmp_dir"
+        return 1
     fi
+
+    local_sha=$(sha256sum "$tmp_tar" | awk '{print $1}')
+    remote_sha=$(fetch_json_api "https://api.github.com/repos/${UPDATE_REPO}/git/ref/heads/${UPDATE_REF}" | jq -r '.object.sha // empty' 2>/dev/null || true)
+
+    tar -tzf "$tmp_tar" >/dev/null 2>&1 || {
+        msg_error "Archive de mise à jour invalide"
+        rm -rf "$tmp_dir"
+        return 1
+    }
+
+    tar -xzf "$tmp_tar" -C "$tmp_dir" --strip-components=1
+    remote_version=$(grep -m1 'readonly SCRIPT_VERSION=' "${tmp_dir}/install_unbound_interactive.sh" | cut -d'"' -f2)
+
+    if [[ -n "$remote_version" && "$remote_version" == "$SCRIPT_VERSION" ]]; then
+        msg_ok "Déjà à jour (v${SCRIPT_VERSION})"
+        rm -rf "$tmp_dir"
+        return 0
+    fi
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "  [DRY-RUN] SHA256 archive: ${local_sha}"
+        [[ -n "$remote_sha" ]] && echo "  [DRY-RUN] Commit distant: ${remote_sha:0:7}"
+        echo "  [DRY-RUN] Copie ${tmp_dir}/install_unbound_interactive.sh -> ${SCRIPT_DIR}/install_unbound_interactive.sh"
+        echo "  [DRY-RUN] Copie ${tmp_dir}/setup.sh -> ${SCRIPT_DIR}/setup.sh"
+        echo "  [DRY-RUN] Copie ${tmp_dir}/lib/*.sh -> ${SCRIPT_DIR}/lib/"
+        rm -rf "$tmp_dir"
+        msg_ok "Mise à jour simulée"
+        return 0
+    fi
+
+    [[ -f "${tmp_dir}/install_unbound_interactive.sh" && -f "${tmp_dir}/setup.sh" && -f "${tmp_dir}/lib/common.sh" ]] || {
+        msg_error "Archive incomplète: fichiers requis manquants"
+        rm -rf "$tmp_dir"
+        return 1
+    }
+
+    cp "${tmp_dir}/install_unbound_interactive.sh" "${SCRIPT_DIR}/install_unbound_interactive.sh"
+    cp "${tmp_dir}/setup.sh" "${SCRIPT_DIR}/setup.sh"
+    cp "${tmp_dir}/lib/common.sh" "${SCRIPT_DIR}/lib/common.sh"
+    if [[ -f "${tmp_dir}/lib/health_checks.sh" ]]; then
+        cp "${tmp_dir}/lib/health_checks.sh" "${SCRIPT_DIR}/lib/health_checks.sh"
+    fi
+    chmod +x "${SCRIPT_DIR}/install_unbound_interactive.sh" "${SCRIPT_DIR}/setup.sh"
+
+    rm -rf "$tmp_dir"
+    msg_ok "Mis à jour: v${SCRIPT_VERSION} → v${remote_version:-inconnue}. Relancez le script."
 }
 
 show_menu() {
@@ -1178,16 +1192,59 @@ show_help() {
 }
 
 _AGH_VER=""
+get_agh_arch() {
+    case "$(uname -m)" in
+        x86_64) echo "amd64" ;;
+        aarch64) echo "arm64" ;;
+        armv7l) echo "armv7" ;;
+        *) return 1 ;;
+    esac
+}
+
+get_adguard_release_checksum() {
+    local version="$1" file_name="$2"
+    local release_json checksums_url checksums_file checksum
+
+    release_json=$(fetch_json_api "https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/tags/${version}") || return 1
+    checksums_url=$(jq -r '.assets[]? | select(.name | test("checksums?\\.txt$"; "i")) | .browser_download_url' <<< "$release_json" | head -n1)
+    [[ -n "$checksums_url" && "$checksums_url" != "null" ]] || return 1
+
+    checksums_file=$(mktemp /tmp/agh_checksums.XXXXXX)
+    if ! download_with_retry "$checksums_url" "$checksums_file" 3 >/dev/null; then
+        rm -f "$checksums_file"
+        return 1
+    fi
+
+    checksum=$(grep -F "$file_name" "$checksums_file" | head -n1 | grep -Eo '[a-fA-F0-9]{64}' | head -n1)
+    rm -f "$checksums_file"
+
+    [[ "$checksum" =~ ^[a-fA-F0-9]{64}$ ]] || return 1
+    echo "$checksum"
+}
+
+download_adguard_release_tarball() {
+    local version="$1" agh_arch="$2" output_file="$3"
+    local file_name checksum url
+
+    file_name="AdGuardHome_linux_${agh_arch}.tar.gz"
+    url="https://github.com/AdguardTeam/AdGuardHome/releases/download/${version}/${file_name}"
+    checksum=$(get_adguard_release_checksum "$version" "$file_name") || {
+        msg_error "Checksum officiel introuvable pour ${file_name} (${version})"
+        return 1
+    }
+
+    download_with_retry "$url" "$output_file" 3 "$checksum"
+}
+
 _prefetch_adguard() {
     [[ -f "$AGH_BINARY" ]] && return 0
-    local arch agh_arch
-    arch=$(uname -m)
-    case $arch in x86_64) agh_arch="amd64" ;; aarch64) agh_arch="arm64" ;; armv7l) agh_arch="armv7" ;; *) return 1 ;; esac
+    local agh_arch
+    agh_arch=$(get_agh_arch) || return 1
     local ver
     ver=$(fetch_json_api "https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest" | jq -r '.tag_name')
     [[ -z "$ver" || "$ver" == "null" ]] && return 1
     mkdir -p /tmp/agh_install
-    download_with_retry "https://github.com/AdguardTeam/AdGuardHome/releases/download/${ver}/AdGuardHome_linux_${agh_arch}.tar.gz" "/tmp/agh_install/AGH.tar.gz" 3 && _AGH_VER="$ver"
+    download_adguard_release_tarball "$ver" "$agh_arch" "/tmp/agh_install/AGH.tar.gz" && _AGH_VER="$ver"
 }
 
 # --- Entry Point ---
@@ -1195,19 +1252,47 @@ _prefetch_adguard() {
 main() {
     [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && show_help
 
-    local args=()
-    for arg in "$@"; do
-        case "$arg" in
-            --dry-run) DRY_RUN=true ;;
-            --allow-proxmox-host) ALLOW_PROXMOX_HOST=true ;;
-            *) args+=("$arg") ;;
+    local command="" benchmark_queries="$DEFAULT_BENCHMARK_QUERIES"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            --allow-proxmox-host)
+                ALLOW_PROXMOX_HOST=true
+                shift
+                ;;
+            --upstream)
+                [[ -n "${2:-}" ]] || { msg_error "--upstream requiert une valeur"; exit 1; }
+                validate_upstream "$2" || exit 1
+                SELECTED_UPSTREAM="$2"
+                shift 2
+                ;;
+            --benchmark)
+                [[ -z "$command" ]] || { msg_error "Plusieurs commandes détectées"; exit 1; }
+                command="--benchmark"
+                if [[ -n "${2:-}" && ! "${2:-}" =~ ^-- ]]; then
+                    benchmark_queries="$2"
+                    shift 2
+                else
+                    shift
+                fi
+                ;;
+            --install|--repair|--unbound-only|--health|--stats|--update|--uninstall)
+                [[ -z "$command" ]] || { msg_error "Plusieurs commandes détectées"; exit 1; }
+                command="$1"
+                shift
+                ;;
+            --help|-h)
+                show_help
+                ;;
+            *)
+                msg_error "Option inconnue: $1"
+                show_help
+                ;;
         esac
     done
-    if [[ ${#args[@]} -gt 0 ]]; then
-        set -- "${args[@]}"
-    else
-        set --
-    fi
 
     [[ "$DRY_RUN" == "true" ]] && msg_warn "Mode DRY-RUN actif — aucune modification système ne sera effectuée."
 
@@ -1216,13 +1301,7 @@ main() {
     check_proxmox_target
     check_dependencies
 
-    if [[ "${1:-}" == "--upstream" && -n "${2:-}" ]]; then
-        validate_upstream "$2" || exit 1
-        SELECTED_UPSTREAM="$2"
-        shift 2
-    fi
-
-    case "${1:-}" in
+    case "$command" in
         --install)
             INTERACTIVE=false
             header_info
@@ -1262,7 +1341,7 @@ main() {
         --benchmark)
             header_info
             if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]] && type benchmark_dns_performance &>/dev/null; then
-                benchmark_dns_performance "${2:-$DEFAULT_BENCHMARK_QUERIES}"
+                benchmark_dns_performance "$benchmark_queries"
             else
                 msg_error "Benchmark indisponible (lib/health_checks.sh manquant)"
                 exit 1
@@ -1279,11 +1358,9 @@ main() {
         "")
             show_menu
             ;;
-        *)
-            msg_error "Option inconnue: $1"
-            show_help
-            ;;
     esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

@@ -21,34 +21,6 @@ if [[ -f "${SCRIPT_DIR_TEST}/../lib/common.sh" ]]; then
     source "${SCRIPT_DIR_TEST}/../lib/common.sh"
 fi
 
-# Mock functions from install_unbound_interactive.sh (not sourced by tests)
-get_power_of_two() {
-    local n=$1 p=1
-    while (( p * 2 <= n )); do (( p *= 2 )); done
-    echo "$p"
-}
-
-count_cpuset_cpus() {
-    local cpuset=$1 total=0 part start end
-    cpuset=${cpuset//[$'\t\n\r ']/}
-    [[ -n "$cpuset" ]] || { echo "0"; return 1; }
-    IFS=',' read -ra parts <<< "$cpuset"
-    for part in "${parts[@]}"; do
-        if [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
-            start=${BASH_REMATCH[1]}; end=${BASH_REMATCH[2]}
-            (( end >= start )) && (( total += end - start + 1 ))
-        elif [[ "$part" =~ ^[0-9]+$ ]]; then
-            (( total++ ))
-        fi
-    done
-    if (( total > 0 )); then
-        echo "$total"
-    else
-        echo "0"
-        return 1
-    fi
-}
-
 # Counters
 TESTS_PASSED=0
 TESTS_FAILED=0
@@ -250,7 +222,7 @@ test_disk_space_check() {
 }
 
 # ==========================================================================
-# MOCK TESTS - DNS FUNCTIONS
+# UNIT TESTS - DNS FUNCTIONS
 # ==========================================================================
 
 test_power_of_two() {
@@ -331,33 +303,36 @@ test_count_cpuset_cpus() {
     result=$(count_cpuset_cpus "0");    assert_equals "1" "$result" "Single CPU 0"
     result=$(count_cpuset_cpus "0,2,4"); assert_equals "3" "$result" "Multiple singles"
     result=$(count_cpuset_cpus "0-1,4-7"); assert_equals "6" "$result" "Mixed ranges"
-    result=$(count_cpuset_cpus "");     assert_equals "0" "$result" "Empty cpuset"
+    if result=$(count_cpuset_cpus ""); then
+        fail "Empty cpuset should fail"
+    else
+        pass "Empty cpuset should fail"
+    fi
 }
 
 test_performance_profile_boundaries() {
     echo ""
     echo "=== Testing Performance Profile Boundaries ==="
     
-    # Test that cache ratios are correct (msg_cache should be half of rrset_cache)
-    local scenarios=(
-        "512:16:8"
-        "768:32:16"
-        "1500:64:32"
-        "3000:128:64"
-        "8192:256:128"
+    local script
+    script="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/install_unbound_interactive.sh"
+
+    local profiles=(
+        'RAM_MB <= 512 )); then:RRSET_CACHE_SIZE="128m"; MSG_CACHE_SIZE="64m"'
+        'RAM_MB < 1024 )); then:RRSET_CACHE_SIZE="192m"; MSG_CACHE_SIZE="96m"'
+        'RAM_MB < 2048 )); then:RRSET_CACHE_SIZE="256m"; MSG_CACHE_SIZE="128m"'
+        'RAM_MB < 4096 )); then:RRSET_CACHE_SIZE="512m"; MSG_CACHE_SIZE="256m"'
+        'else:RRSET_CACHE_SIZE="1024m"; MSG_CACHE_SIZE="512m"'
     )
-    
-    for scenario in "${scenarios[@]}"; do
-        local ram="${scenario%%:*}"
-        local rest="${scenario#*:}"
-        local expected_rrset="${rest%%:*}"
-        local expected_msg="${rest##*:}"
-        
-        # Quick validate: msg_cache should be exactly half of rrset_cache
-        if (( expected_msg * 2 == expected_rrset )); then
-            pass "Profile at ${ram}MB: rrset=${expected_rrset}m msg=${expected_msg}m (ratio 2:1)"
+
+    local profile
+    for profile in "${profiles[@]}"; do
+        local branch="${profile%%:*}"
+        local values="${profile#*:}"
+        if grep -q "$branch" "$script" && grep -q "$values" "$script"; then
+            pass "Profil présent: ${values}"
         else
-            fail "Profile at ${ram}MB: unexpected ratio rrset=${expected_rrset}m msg=${expected_msg}m"
+            fail "Profil absent: ${values}"
         fi
     done
 }

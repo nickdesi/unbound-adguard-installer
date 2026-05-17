@@ -177,12 +177,44 @@ validate_ipv4() {
     local -a octets
     read -r -a octets <<< "$ip"
     for octet in "${octets[@]}"; do
-        if (( octet > 255 )); then
+        if (( 10#$octet > 255 )); then
             return 1
         fi
     done
     
     return 0
+}
+
+# Return the largest power of two <= n (minimum 1)
+# Usage: get_power_of_two <n>
+get_power_of_two() {
+    local n="$1" p=1
+    while (( p * 2 <= n )); do
+        (( p *= 2 ))
+    done
+    echo "$p"
+}
+
+# Count CPUs from cpuset format (e.g. 0-3,6,8-9)
+# Usage: count_cpuset_cpus <cpuset>
+count_cpuset_cpus() {
+    local cpuset="$1" total=0 part start end
+    cpuset=${cpuset//[$'\t\n\r ']/}
+    [[ -n "$cpuset" ]] || return 1
+
+    IFS=',' read -ra parts <<< "$cpuset"
+    for part in "${parts[@]}"; do
+        if [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            start=${BASH_REMATCH[1]}
+            end=${BASH_REMATCH[2]}
+            (( end >= start )) && (( total += end - start + 1 ))
+        elif [[ "$part" =~ ^[0-9]+$ ]]; then
+            (( total++ ))
+        fi
+    done
+
+    (( total > 0 )) || return 1
+    echo "$total"
 }
 
 # Validate port number

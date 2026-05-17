@@ -39,6 +39,7 @@ fetch_remote_sha() {
 main() {
     need_cmd curl
     need_cmd tar
+    need_cmd sha256sum
 
     local tarball="${WORKDIR}/repo.tar.gz"
 
@@ -48,6 +49,15 @@ main() {
     local sha256
     sha256=$(sha256sum "$tarball" | awk '{print $1}')
     echo "SHA256: ${sha256}"
+
+    if [[ -n "${EXPECTED_ARCHIVE_SHA256:-}" ]]; then
+        if [[ "$sha256" != "$EXPECTED_ARCHIVE_SHA256" ]]; then
+            error "Checksum inattendu: attendu ${EXPECTED_ARCHIVE_SHA256}, obtenu ${sha256}"
+        fi
+        echo "Checksum validé via EXPECTED_ARCHIVE_SHA256"
+    else
+        echo "[WARN] EXPECTED_ARCHIVE_SHA256 non défini: archive non épinglée."
+    fi
 
     if command -v jq &>/dev/null; then
         fetch_remote_sha "${REPO}" "${REF}" 2>/dev/null || true
