@@ -313,27 +313,98 @@ test_count_cpuset_cpus() {
 test_performance_profile_boundaries() {
     echo ""
     echo "=== Testing Performance Profile Boundaries ==="
-    
+
     local script
     script="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/install_unbound_interactive.sh"
 
-    local profiles=(
-        'RAM_MB <= 512 )); then:RRSET_CACHE_SIZE="128m"; MSG_CACHE_SIZE="64m"'
-        'RAM_MB < 1024 )); then:RRSET_CACHE_SIZE="192m"; MSG_CACHE_SIZE="96m"'
-        'RAM_MB < 2048 )); then:RRSET_CACHE_SIZE="256m"; MSG_CACHE_SIZE="128m"'
-        'RAM_MB < 4096 )); then:RRSET_CACHE_SIZE="512m"; MSG_CACHE_SIZE="256m"'
-        'else:RRSET_CACHE_SIZE="1024m"; MSG_CACHE_SIZE="512m"'
-    )
+    local rams=(512 1024 2048 4096)
+    local prev_rrset=0 prev_jostle=0 prev_client_timeout=0
+    local ram result rrset msg qpt outgoing jostle client_timeout reply_ttl
 
-    local profile
-    for profile in "${profiles[@]}"; do
-        local branch="${profile%%:*}"
-        local values="${profile#*:}"
-        if grep -q "$branch" "$script" && grep -q "$values" "$script"; then
-            pass "Profil présent: ${values}"
-        else
-            fail "Profil absent: ${values}"
+    for ram in "${rams[@]}"; do
+        result=$(bash -c '
+            source "$1"
+            INTERACTIVE=false
+            CPU_CORES=4
+            RAM_MB="$2"
+            _RESOURCES_CACHED=true
+            calculate_optimized_settings
+            echo "${RRSET_CACHE_SIZE}:${MSG_CACHE_SIZE}:${QUERIES_PER_THREAD}:${OUTGOING_RANGE}:${JOSTLE_TIMEOUT}:${SERVE_EXPIRED_CLIENT_TIMEOUT}:${SERVE_EXPIRED_REPLY_TTL}"
+        ' _ "$script" "$ram" 2>/dev/null)
+
+        if [[ -z "$result" ]]; then
+            fail "Calcul tuning dynamique impossible pour ${ram}MB"
+            continue
         fi
+
+        rrset=${result%%:*}; result=${result#*:}
+        msg=${result%%:*}; result=${result#*:}
+        qpt=${result%%:*}; result=${result#*:}
+        outgoing=${result%%:*}; result=${result#*:}
+        jostle=${result%%:*}; result=${result#*:}
+        client_timeout=${result%%:*}
+        reply_ttl=${result##*:}
+
+        rrset=${rrset%m}
+        msg=${msg%m}
+
+        if (( msg * 2 == rrset )); then
+            pass "${ram}MB: ratio cache rrset/msg optimal (2:1)"
+        else
+            fail "${ram}MB: ratio cache invalide rrset=${rrset} msg=${msg}"
+        fi
+
+        if (( rrset >= prev_rrset )); then
+            pass "${ram}MB: cache rrset non décroissant (${rrset}m)"
+        else
+            fail "${ram}MB: cache rrset décroissant (${rrset}m < ${prev_rrset}m)"
+        fi
+
+        if (( qpt >= 512 && qpt <= 2048 )); then
+            pass "${ram}MB: num-queries-per-thread borné (${qpt})"
+        else
+            fail "${ram}MB: num-queries-per-thread hors bornes (${qpt})"
+        fi
+
+        if (( outgoing >= 512 && outgoing <= 4096 )); then
+            pass "${ram}MB: outgoing-range borné (${outgoing})"
+        else
+            fail "${ram}MB: outgoing-range hors bornes (${outgoing})"
+        fi
+
+        if (( jostle >= 120 && jostle <= 400 )); then
+            pass "${ram}MB: jostle-timeout borné (${jostle})"
+        else
+            fail "${ram}MB: jostle-timeout hors bornes (${jostle})"
+        fi
+
+        if (( client_timeout >= 1200 && client_timeout <= 2400 )); then
+            pass "${ram}MB: serve-expired-client-timeout borné (${client_timeout})"
+        else
+            fail "${ram}MB: serve-expired-client-timeout hors bornes (${client_timeout})"
+        fi
+
+        if (( reply_ttl == 30 || reply_ttl == 60 || reply_ttl == 120 )); then
+            pass "${ram}MB: serve-expired-reply-ttl valide (${reply_ttl})"
+        else
+            fail "${ram}MB: serve-expired-reply-ttl invalide (${reply_ttl})"
+        fi
+
+        if (( jostle >= prev_jostle )); then
+            pass "${ram}MB: jostle-timeout non décroissant (${jostle})"
+        else
+            fail "${ram}MB: jostle-timeout décroissant (${jostle} < ${prev_jostle})"
+        fi
+
+        if (( client_timeout >= prev_client_timeout )); then
+            pass "${ram}MB: serve-expired-client-timeout non décroissant (${client_timeout})"
+        else
+            fail "${ram}MB: serve-expired-client-timeout décroissant (${client_timeout} < ${prev_client_timeout})"
+        fi
+
+        prev_rrset=$rrset
+        prev_jostle=$jostle
+        prev_client_timeout=$client_timeout
     done
 }
 

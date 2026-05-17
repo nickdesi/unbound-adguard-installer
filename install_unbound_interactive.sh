@@ -447,26 +447,75 @@ calculate_optimized_settings() {
     CACHE_SLABS=$(get_power_of_two "$NUM_THREADS")
     (( CACHE_SLABS < 1 )) && CACHE_SLABS=1
 
-    if (( RAM_MB <= 512 )); then
-        RRSET_CACHE_SIZE="128m"; MSG_CACHE_SIZE="64m";   SO_RCVBUF="1m"; SO_SNDBUF="1m"
-        INFRA_HOSTS=10000;       OUTGOING_RANGE=1024;    QUERIES_PER_THREAD=512; NEG_CACHE_SIZE="4m"; KEY_CACHE_SIZE="8m"
-    elif (( RAM_MB < 1024 )); then
-        RRSET_CACHE_SIZE="192m"; MSG_CACHE_SIZE="96m";   SO_RCVBUF="1m"; SO_SNDBUF="1m"
-        INFRA_HOSTS=20000;       OUTGOING_RANGE=1024;    QUERIES_PER_THREAD=1024; NEG_CACHE_SIZE="8m"; KEY_CACHE_SIZE="16m"
-    elif (( RAM_MB < 2048 )); then
-        RRSET_CACHE_SIZE="256m"; MSG_CACHE_SIZE="128m";  SO_RCVBUF="2m"; SO_SNDBUF="2m"
-        INFRA_HOSTS=20000;       OUTGOING_RANGE=950;     QUERIES_PER_THREAD=512; NEG_CACHE_SIZE="8m"; KEY_CACHE_SIZE="16m"
+    local reserve_mb cache_budget_mb rrset_mb msg_mb key_mb neg_mb
+    reserve_mb=$(( RAM_MB / 4 ))
+    (( reserve_mb < 128 )) && reserve_mb=128
+    (( reserve_mb > 1024 )) && reserve_mb=1024
+
+    cache_budget_mb=$(( RAM_MB - reserve_mb ))
+    (( cache_budget_mb < 96 )) && cache_budget_mb=96
+    (( cache_budget_mb > 3072 )) && cache_budget_mb=3072
+
+    rrset_mb=$(( (cache_budget_mb * 2) / 3 ))
+    (( rrset_mb < 64 )) && rrset_mb=64
+    msg_mb=$(( rrset_mb / 2 ))
+    (( msg_mb < 32 )) && msg_mb=32
+
+    key_mb=$(( rrset_mb / 8 ))
+    (( key_mb < 8 )) && key_mb=8
+    (( key_mb > 128 )) && key_mb=128
+
+    neg_mb=$(( msg_mb / 8 ))
+    (( neg_mb < 4 )) && neg_mb=4
+    (( neg_mb > 64 )) && neg_mb=64
+
+    RRSET_CACHE_SIZE="${rrset_mb}m"
+    MSG_CACHE_SIZE="${msg_mb}m"
+    KEY_CACHE_SIZE="${key_mb}m"
+    NEG_CACHE_SIZE="${neg_mb}m"
+
+    if (( RAM_MB < 1536 )); then
+        SO_RCVBUF="1m"; SO_SNDBUF="1m"
     elif (( RAM_MB < 4096 )); then
-        RRSET_CACHE_SIZE="512m"; MSG_CACHE_SIZE="256m";  SO_RCVBUF="4m"; SO_SNDBUF="4m"
-        INFRA_HOSTS=40000;       OUTGOING_RANGE=2048;    QUERIES_PER_THREAD=1024; NEG_CACHE_SIZE="16m"; KEY_CACHE_SIZE="32m"
+        SO_RCVBUF="2m"; SO_SNDBUF="2m"
     else
-        RRSET_CACHE_SIZE="1024m"; MSG_CACHE_SIZE="512m"; SO_RCVBUF="4m"; SO_SNDBUF="4m"
-        INFRA_HOSTS=75000;       OUTGOING_RANGE=4096;    QUERIES_PER_THREAD=2048; NEG_CACHE_SIZE="32m"; KEY_CACHE_SIZE="64m"
+        SO_RCVBUF="4m"; SO_SNDBUF="4m"
     fi
 
-    CACHE_MIN_TTL=120
-    CACHE_MAX_TTL=86400
-    SERVE_EXPIRED_TTL=86400
+    INFRA_HOSTS=$(( 10000 + (RAM_MB * 12) + (NUM_THREADS * 1000) ))
+    (( INFRA_HOSTS > 100000 )) && INFRA_HOSTS=100000
+
+    OUTGOING_RANGE=$(( 512 + (NUM_THREADS * 256) + (RAM_MB / 4) ))
+    (( OUTGOING_RANGE < 512 )) && OUTGOING_RANGE=512
+    (( OUTGOING_RANGE > 4096 )) && OUTGOING_RANGE=4096
+
+    QUERIES_PER_THREAD=$(( 512 + (RAM_MB / (NUM_THREADS * 4)) ))
+    (( QUERIES_PER_THREAD < 512 )) && QUERIES_PER_THREAD=512
+    (( QUERIES_PER_THREAD > 2048 )) && QUERIES_PER_THREAD=2048
+
+    if (( RAM_MB < 1024 )); then
+        CACHE_MIN_TTL=60
+        CACHE_MAX_TTL=43200
+        SERVE_EXPIRED_TTL=43200
+        SERVE_EXPIRED_REPLY_TTL=30
+        SERVE_EXPIRED_CLIENT_TIMEOUT=1200
+    elif (( RAM_MB < 4096 )); then
+        CACHE_MIN_TTL=120
+        CACHE_MAX_TTL=86400
+        SERVE_EXPIRED_TTL=86400
+        SERVE_EXPIRED_REPLY_TTL=60
+        SERVE_EXPIRED_CLIENT_TIMEOUT=1800
+    else
+        CACHE_MIN_TTL=180
+        CACHE_MAX_TTL=172800
+        SERVE_EXPIRED_TTL=172800
+        SERVE_EXPIRED_REPLY_TTL=120
+        SERVE_EXPIRED_CLIENT_TIMEOUT=2400
+    fi
+
+    JOSTLE_TIMEOUT=$(( 120 + (NUM_THREADS * 20) + (RAM_MB / 256) ))
+    (( JOSTLE_TIMEOUT < 120 )) && JOSTLE_TIMEOUT=120
+    (( JOSTLE_TIMEOUT > 400 )) && JOSTLE_TIMEOUT=400
 
     SO_REUSEPORT="yes"
     if (( NUM_THREADS == 1 )); then
@@ -568,7 +617,7 @@ ${anchor_directive}
     key-cache-size: ${KEY_CACHE_SIZE}
     neg-cache-size: ${NEG_CACHE_SIZE}
 
-    jostle-timeout: 200
+    jostle-timeout: ${JOSTLE_TIMEOUT}
     target-fetch-policy: "2 1 0 0 0 0"
 
     # --- Réseau ---
@@ -588,8 +637,8 @@ ${anchor_directive}
     cache-max-ttl: ${CACHE_MAX_TTL}
     serve-expired: yes
     serve-expired-ttl: ${SERVE_EXPIRED_TTL}
-    serve-expired-client-timeout: 1800
-    serve-expired-reply-ttl: 60
+    serve-expired-client-timeout: ${SERVE_EXPIRED_CLIENT_TIMEOUT}
+    serve-expired-reply-ttl: ${SERVE_EXPIRED_REPLY_TTL}
     prefetch: yes
     prefetch-key: yes
     aggressive-nsec: yes

@@ -68,13 +68,22 @@ graph LR
 
 Le script ajuste automatiquement Unbound selon les ressources du LXC :
 
-| Profil | RAM | Cache rrset | Cache msg | Usage visé |
-|--------|-----|-------------|-----------|------------|
-| Micro | ≤ 512 MB | 128 MB | 64 MB | Petit lab |
-| Small | < 1 GB | 192 MB | 96 MB | Maison légère |
-| Medium | < 2 GB | 256 MB | 128 MB | Maison / homelab |
-| Large | < 4 GB | 512 MB | 256 MB | Réseau actif |
-| Premium | ≥ 4 GB | 1024 MB | 512 MB | Réseau chargé |
+| Paramètre | Stratégie |
+|-----------|-----------|
+| Cache rrset/msg | Calcul dynamique à partir de la RAM détectée, avec ratio maintenu à 2:1 |
+| Key/neg cache | Dimensionnés automatiquement avec bornes minimales et maximales |
+| Concurrence | `outgoing-range` et `num-queries-per-thread` ajustés selon RAM + CPU, bornés pour stabilité |
+| Buffers socket | Adaptés par paliers mémoire pour éviter la surconsommation |
+| Latence/résilience | `jostle-timeout` et `serve-expired-*` ajustés dynamiquement selon la mémoire disponible |
+
+Exemples indicatifs (4 vCPU) :
+
+| RAM détectée | Cache rrset | Cache msg |
+|-------------|-------------|-----------|
+| 512 MB | ~256 MB | ~128 MB |
+| 1 GB | ~512 MB | ~256 MB |
+| 2 GB | ~1024 MB | ~512 MB |
+| 4 GB+ | jusqu'à ~2048 MB | jusqu'à ~1024 MB |
 
 Optimisations incluses :
 
