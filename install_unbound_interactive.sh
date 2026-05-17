@@ -268,7 +268,9 @@ repair_unbound_trust_anchor() {
     fi
 
     mkdir -p "$(dirname "$UNBOUND_TRUST_ANCHOR")"
-    [[ -f "$UNBOUND_TRUST_ANCHOR" ]] && cp -a "$UNBOUND_TRUST_ANCHOR" "${UNBOUND_TRUST_ANCHOR}.backup.$(date +%s)" || true
+    if [[ -f "$UNBOUND_TRUST_ANCHOR" ]]; then
+        cp -a "$UNBOUND_TRUST_ANCHOR" "${UNBOUND_TRUST_ANCHOR}.backup.$(date +%s)"
+    fi
     rm -f "$UNBOUND_TRUST_ANCHOR"
 
     if command -v unbound-anchor &>/dev/null && unbound-anchor -a "$UNBOUND_TRUST_ANCHOR" &>/dev/null; then
@@ -949,7 +951,9 @@ uninstall_all() {
 
     msg_info "Suppression AdGuard Home..."
     systemctl stop AdGuardHome &>/dev/null || true
-    [[ -x "$AGH_BINARY" ]] && "$AGH_BINARY" -s uninstall &>/dev/null || true
+    if [[ -x "$AGH_BINARY" ]]; then
+        "$AGH_BINARY" -s uninstall &>/dev/null || true
+    fi
     rm -rf "$AGH_INSTALL_DIR"
     msg_ok "AdGuard Home supprimé"
 
@@ -1100,7 +1104,9 @@ show_menu() {
                     hc_raw=$(mktemp)
                     hc_file=$(mktemp)
                     run_full_health_check > "$hc_raw" 2>&1 || true
-                    type benchmark_dns_performance &>/dev/null && benchmark_dns_performance 100 >> "$hc_raw" 2>&1 || true
+                    if type benchmark_dns_performance &>/dev/null; then
+                        benchmark_dns_performance 100 >> "$hc_raw" 2>&1 || true
+                    fi
                     sanitize_textbox_output < "$hc_raw" > "$hc_file"
                     whiptail --title " Diagnostics  v${SCRIPT_VERSION} " --scrolltext --textbox "$hc_file" 26 92 || true
                     rm -f "$hc_raw" "$hc_file"
