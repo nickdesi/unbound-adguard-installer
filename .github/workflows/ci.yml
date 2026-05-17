@@ -11,7 +11,7 @@ jobs:
     name: Shellcheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Run shellcheck
         run: shellcheck install_unbound_interactive.sh lib/common.sh lib/health_checks.sh tests/test_suite.sh setup.sh
 
@@ -19,6 +19,6 @@ jobs:
     name: Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Run test suite
         run: bash tests/test_suite.sh
