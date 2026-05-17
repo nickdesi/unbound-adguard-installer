@@ -1,7 +1,7 @@
 # AdGuard Home + Unbound Installer pour Proxmox LXC
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-3.4.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-3.4.2-blue.svg)](CHANGELOG.md)
 [![Shell](https://img.shields.io/badge/shell-Bash-89e051.svg)](https://www.gnu.org/software/bash/)
 [![Platform](https://img.shields.io/badge/platform-Proxmox%20LXC-orange.svg)](https://www.proxmox.com/)
 

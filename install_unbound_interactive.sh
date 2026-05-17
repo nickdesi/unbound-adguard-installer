@@ -8,7 +8,7 @@
 # Installe, configure et met à jour AdGuard Home + Unbound sur Debian/Ubuntu LXC.
 # ==========================================================================
 # Auteur: Nicolas
-# Version: 3.4.1
+# Version: 3.4.2
 # Licence: MIT
 # ==========================================================================
 
