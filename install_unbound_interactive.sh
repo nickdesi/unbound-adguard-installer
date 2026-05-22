@@ -1216,149 +1216,34 @@ update_script() {
     msg_ok "Mis à jour: v${SCRIPT_VERSION} → v${remote_version:-inconnue}. Relancez le script."
 }
 
-# --- Mise à jour du démon Unbound (compilation depuis les sources) ---
-
 update_unbound_daemon() {
     [[ "$DRY_RUN" == "true" ]] && { echo "  [DRY-RUN] Mise à jour Unbound simulée"; return 0; }
 
     local current_ver
     current_ver="$(unbound -V 2>/dev/null | head -1 | sed 's/.*Version //')"
 
-    msg_info "Vérification de la dernière version Unbound..."
+    msg_info "Mise à jour d'Unbound via apt..."
 
-    local latest_ver
-    if ! latest_ver=$(curl -sSf --max-time 10 "https://api.github.com/repos/NLnetLabs/unbound/releases/latest" 2>/dev/null | grep -oP '"tag_name": "\K[^"]+'); then
-        msg_error "Impossible de contacter GitHub API"
+    apt-get update >> "$LOG_FILE" 2>&1 || { msg_error "Échec d'apt update"; return 1; }
+
+    local avail_ver
+    avail_ver=$(apt-cache policy unbound 2>/dev/null | grep 'Candidate:' | awk '{print $2}')
+    if [[ -z "$avail_ver" ]]; then
+        msg_error "Impossible de déterminer la version disponible"
         return 1
     fi
-    latest_ver="${latest_ver#release-}"
-    [[ -z "$latest_ver" ]] && { msg_error "Format de version inconnu"; return 1; }
 
-    msg_info "Actuelle: ${current_ver:-?} / Dernière: ${latest_ver}"
-
-    if [[ -n "$current_ver" ]] && _version_ge "$current_ver" "$latest_ver"; then
+    if [[ -n "$current_ver" ]] && dpkg --compare-versions "$current_ver" ge "$avail_ver"; then
         msg_ok "Unbound déjà à jour (v${current_ver})"
         return 0
     fi
 
-    whiptail --title " Mise à jour Unbound " \
-        --yesno "Version actuelle : ${current_ver:-?}\nNouvelle version : ${latest_ver}\n\nCompilation depuis les sources (~3 min).\n\nContinuer ?" 12 60 || {
-        msg_info "Mise à jour annulée"; return 0
-    }
-
-    local build_deps=(build-essential libevent-dev libssl-dev libnghttp2-dev libexpat1-dev bison flex libsystemd-dev)
-    local missing_deps=()
-    for dep in "${build_deps[@]}"; do
-        dpkg-query -W -f='${Status}' "$dep" 2>/dev/null | grep -q 'install ok installed' || missing_deps+=("$dep")
-    done
-    if ((${#missing_deps[@]} > 0)); then
-        msg_info "Installation des dépendances de compilation (${#missing_deps[@]} paquet(s))..."
-        apt-get install -y --no-install-recommends "${missing_deps[@]}" >> "$LOG_FILE" 2>&1 || {
-            msg_error "Échec de l'installation des dépendances"
-            return 1
-        }
-    else
-        msg_ok "Dépendances de compilation déjà installées"
-    fi
-
-    local tmp_dir="/tmp/unbound-build"
-    rm -rf "$tmp_dir" && mkdir -p "$tmp_dir"
-
-    msg_info "Téléchargement des sources Unbound ${latest_ver}..."
-    local tarball_url="https://nlnetlabs.nl/downloads/unbound/unbound-${latest_ver}.tar.gz"
-    if ! curl -sSL --max-time 120 -o "${tmp_dir}/unbound.tar.gz" "$tarball_url"; then
-        msg_error "Échec du téléchargement"
-        rm -rf "$tmp_dir"; return 1
-    fi
-
-    # Vérifie que l'archive est valide
-    if ! tar tzf "${tmp_dir}/unbound.tar.gz" &>/dev/null; then
-        msg_error "Archive corrompue — téléchargement incomplet"
-        rm -rf "$tmp_dir"; return 1
-    fi
-
-    tar xzf "${tmp_dir}/unbound.tar.gz" -C "$tmp_dir"
-    local src_dir="${tmp_dir}/unbound-${latest_ver}"
-    if [[ ! -d "$src_dir" ]]; then
-        src_dir=$(find "$tmp_dir" -maxdepth 1 -type d -not -path "$tmp_dir" | head -1)
-    fi
-    if [[ -z "$src_dir" || ! -d "$src_dir" ]]; then
-        msg_error "Sources introuvables après extraction — contenu :"
-        find "$tmp_dir" -maxdepth 1 | tee -a "$LOG_FILE" >&2
-        rm -rf "$tmp_dir"; return 1
-    fi
-    if [[ ! -f "$src_dir/configure" ]]; then
-        msg_error "configure absent ! Contenu de ${src_dir} :"
-        find "$src_dir" -maxdepth 1 | head -30 | tee -a "$LOG_FILE" >&2
-        rm -rf "$tmp_dir"; return 1
-    fi
-    chmod +x "$src_dir/configure"
-
-    cd "$src_dir" || { rm -rf "$tmp_dir"; return 1; }
-
-    msg_info "Configuration (flags Debian — log: $LOG_FILE)..."
-    ./configure \
-        --prefix=/usr --sysconfdir=/etc \
-        --with-libevent --enable-tfo-client --enable-tfo-server \
-        --enable-systemd --with-chroot-dir= \
-        --with-pidfile=/run/unbound.pid \
-        --with-rootkey-file=/usr/share/dns/root.key \
-        --disable-rpath --disable-maintainer-mode >> "$LOG_FILE" 2>&1 || {
-            msg_error "Échec de la configuration — voir $LOG_FILE"
-            rm -rf "$tmp_dir"; return 1
-        }
-
-    msg_info "Compilation (make -j$(nproc) — log: $LOG_FILE)..."
-    make -j"$(nproc)" >> "$LOG_FILE" 2>&1 || {
-        msg_error "Échec de la compilation — voir $LOG_FILE"
-        rm -rf "$tmp_dir"; return 1
-    }
-
-    msg_info "Installation du binaire compilé..."
-    mkdir -p "${tmp_dir}/staging"
-    make install DESTDIR="${tmp_dir}/staging" >> "$LOG_FILE" 2>&1 || {
-        msg_error "Échec de l'installation"; rm -rf "$tmp_dir"; return 1
-    }
-
-    local new_unbound="${tmp_dir}/staging/usr/sbin/unbound"
-    local new_checkconf="${tmp_dir}/staging/usr/sbin/unbound-checkconf"
-    if [[ ! -f "$new_unbound" ]]; then
-        msg_error "Binaire unbound introuvable après make install"; rm -rf "$tmp_dir"; return 1
-    fi
-
-    local ub_backup="/usr/sbin/unbound.backup"
-    local cc_backup="/usr/sbin/unbound-checkconf.backup"
-    local lib_backup_dir="/usr/lib/.unbound-backup"
-    cp /usr/sbin/unbound "$ub_backup" 2>/dev/null || true
-    cp /usr/sbin/unbound-checkconf "$cc_backup" 2>/dev/null || true
-    if [[ -d "${tmp_dir}/staging/usr/lib" ]]; then
-        mkdir -p "$lib_backup_dir"
-        find /usr/lib -maxdepth 1 -name 'libunbound*' -exec cp -a {} "$lib_backup_dir/" \; 2>/dev/null || true
-        cp -a "${tmp_dir}/staging/usr/lib/"* /usr/lib/ 2>/dev/null || true
-        ldconfig 2>/dev/null || true
-    fi
-
-    cp "$new_unbound" /usr/sbin/unbound
-    [[ -f "$new_checkconf" ]] && cp "$new_checkconf" /usr/sbin/unbound-checkconf
-    rm -rf "$tmp_dir"
-
-    msg_info "Redémarrage d'Unbound..."
-    restart_service_safely unbound 30 || {
-        msg_error "Restauration de l'ancien binaire et librairies..."
-        cp "$ub_backup" /usr/sbin/unbound 2>/dev/null || true
-        [[ -f "$cc_backup" ]] && cp "$cc_backup" /usr/sbin/unbound-checkconf 2>/dev/null || true
-        if [[ -d "$lib_backup_dir" ]]; then
-            cp -a "$lib_backup_dir/"* /usr/lib/ 2>/dev/null || true
-            ldconfig 2>/dev/null || true
-            rm -rf "$lib_backup_dir"
-        fi
-        restart_service_safely unbound 30 || msg_error "Échec de la restauration"
+    apt-get install --only-upgrade -y unbound ca-certificates dnsutils >> "$LOG_FILE" 2>&1 || {
+        msg_error "Échec de la mise à jour Unbound"
         return 1
     }
-    rm -f "$ub_backup" "$cc_backup" 2>/dev/null || true
-    rm -rf "$lib_backup_dir" 2>/dev/null || true
 
-    msg_ok "Unbound mis à jour: ${current_ver:-?} → ${latest_ver}"
+    msg_ok "Unbound mis à jour: ${current_ver:-?} → ${avail_ver}"
 }
 
 show_menu() {
@@ -1499,7 +1384,7 @@ show_help() {
     echo -e "  ${YW}--install${CL}            Installation complète (AdGuard Home + Unbound)"
     echo -e "  ${YW}--repair${CL}             Reconfigurer Unbound + AdGuard (sans réinstaller)"
     echo -e "  ${YW}--unbound-only${CL}       Installer/reconfigurer uniquement Unbound"
-    echo -e "  ${YW}--update-unbound${CL}     Compiler la dernière version d'Unbound depuis GitHub"
+    echo -e "  ${YW}--update-unbound${CL}     Mettre à jour Unbound via apt (dernière version disponible)"
     echo -e "  ${YW}--update${CL}             Mettre à jour ce script depuis GitHub"
     echo -e "  ${YW}--uninstall${CL}          Désinstaller AdGuard Home et Unbound"
     echo -e "  ${YW}--health${CL}             Exécuter le health check complet"
