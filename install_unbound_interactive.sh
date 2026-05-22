@@ -1257,7 +1257,7 @@ update_unbound_daemon() {
     msg_info "Téléchargement des sources Unbound ${latest_ver}..."
     if ! curl -sSL --max-time 60 \
         -o "${tmp_dir}/unbound.tar.gz" \
-        "https://github.com/NLnetLabs/unbound/archive/refs/tags/release-${latest_ver}.tar.gz"; then
+        "https://nlnetlabs.nl/downloads/unbound/unbound-${latest_ver}.tar.gz"; then
         msg_error "Échec du téléchargement"
         rm -rf "$tmp_dir"; return 1
     fi
@@ -1276,10 +1276,14 @@ update_unbound_daemon() {
         --enable-systemd --with-chroot-dir= \
         --with-pidfile=/run/unbound.pid \
         --with-rootkey-file=/usr/share/dns/root.key \
-        --disable-rpath --disable-maintainer-mode &>/dev/null
+        --disable-rpath --disable-maintainer-mode 2>&1 | tee -a "$LOG_FILE" || {
+            msg_error "Échec de la configuration — voir $LOG_FILE"
+            rm -rf "$tmp_dir"; return 1
+        }
 
-    make -j"$(nproc)" &>/dev/null || {
-        msg_error "Échec de la compilation"; rm -rf "$tmp_dir"; return 1
+    make -j"$(nproc)" 2>&1 | tee -a "$LOG_FILE" || {
+        msg_error "Échec de la compilation — voir $LOG_FILE"
+        rm -rf "$tmp_dir"; return 1
     }
 
     msg_info "Installation du binaire compilé..."
