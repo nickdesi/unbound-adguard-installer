@@ -1268,23 +1268,21 @@ update_unbound_daemon() {
     fi
 
     tar xzf "${tmp_dir}/unbound.tar.gz" -C "$tmp_dir"
-    local src_dir
-    src_dir=$(find "$tmp_dir" -maxdepth 1 -type d -name 'unbound-*' | head -1)
-    if [[ -z "$src_dir" ]]; then
-        msg_error "Sources introuvables après extraction"
-        ls -la "$tmp_dir" >&2
+    local src_dir="${tmp_dir}/unbound-${latest_ver}"
+    if [[ ! -d "$src_dir" ]]; then
+        src_dir=$(find "$tmp_dir" -maxdepth 1 -type d -not -path "$tmp_dir" | head -1)
+    fi
+    if [[ -z "$src_dir" || ! -d "$src_dir" ]]; then
+        msg_error "Sources introuvables après extraction — contenu :"
+        find "$tmp_dir" -maxdepth 1 | tee -a "$LOG_FILE" >&2
         rm -rf "$tmp_dir"; return 1
     fi
-
-    # Si configure manque (tarball brut sans autoconf), on le génère
-    if [[ ! -x "$src_dir/configure" ]]; then
-        msg_warn "configure non présent — génération avec autoreconf..."
-        apt-get install -y --no-install-recommends autoconf automake libtool &>/dev/null
-        (cd "$src_dir" && autoreconf -fi) 2>&1 | tee -a "$LOG_FILE" || {
-            msg_error "autoreconf a échoué"
-            rm -rf "$tmp_dir"; return 1
-        }
+    if [[ ! -f "$src_dir/configure" ]]; then
+        msg_error "configure absent ! Contenu de ${src_dir} :"
+        find "$src_dir" -maxdepth 1 | head -30 | tee -a "$LOG_FILE" >&2
+        rm -rf "$tmp_dir"; return 1
     fi
+    chmod +x "$src_dir/configure"
 
     cd "$src_dir" || { rm -rf "$tmp_dir"; return 1; }
 
