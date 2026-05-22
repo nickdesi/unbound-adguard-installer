@@ -1315,21 +1315,48 @@ update_unbound_daemon() {
     }
 
     msg_info "Installation du binaire compilé..."
-    local ub_backup="/usr/sbin/unbound.backup"
-    [[ -f "$ub_backup" ]] && cp "$ub_backup" "${ub_backup}.old"
-    cp /usr/sbin/unbound "$ub_backup"
-    make install &>/dev/null || {
+    mkdir -p "${tmp_dir}/staging"
+    make install DESTDIR="${tmp_dir}/staging" >> "$LOG_FILE" 2>&1 || {
         msg_error "Échec de l'installation"; rm -rf "$tmp_dir"; return 1
     }
+
+    local new_unbound="${tmp_dir}/staging/usr/sbin/unbound"
+    local new_checkconf="${tmp_dir}/staging/usr/sbin/unbound-checkconf"
+    if [[ ! -f "$new_unbound" ]]; then
+        msg_error "Binaire unbound introuvable après make install"; rm -rf "$tmp_dir"; return 1
+    fi
+
+    local ub_backup="/usr/sbin/unbound.backup"
+    local cc_backup="/usr/sbin/unbound-checkconf.backup"
+    local lib_backup_dir="/usr/lib/.unbound-backup"
+    cp /usr/sbin/unbound "$ub_backup" 2>/dev/null || true
+    cp /usr/sbin/unbound-checkconf "$cc_backup" 2>/dev/null || true
+    if [[ -d "${tmp_dir}/staging/usr/lib" ]]; then
+        mkdir -p "$lib_backup_dir"
+        find /usr/lib -maxdepth 1 -name 'libunbound*' -exec cp -a {} "$lib_backup_dir/" \; 2>/dev/null || true
+        cp -a "${tmp_dir}/staging/usr/lib/"* /usr/lib/ 2>/dev/null || true
+        ldconfig 2>/dev/null || true
+    fi
+
+    cp "$new_unbound" /usr/sbin/unbound
+    [[ -f "$new_checkconf" ]] && cp "$new_checkconf" /usr/sbin/unbound-checkconf
     rm -rf "$tmp_dir"
 
     msg_info "Redémarrage d'Unbound..."
     restart_service_safely unbound 30 || {
-        msg_error "Restauration de l'ancien binaire..."
-        cp "$ub_backup" /usr/sbin/unbound
+        msg_error "Restauration de l'ancien binaire et librairies..."
+        cp "$ub_backup" /usr/sbin/unbound 2>/dev/null || true
+        [[ -f "$cc_backup" ]] && cp "$cc_backup" /usr/sbin/unbound-checkconf 2>/dev/null || true
+        if [[ -d "$lib_backup_dir" ]]; then
+            cp -a "$lib_backup_dir/"* /usr/lib/ 2>/dev/null || true
+            ldconfig 2>/dev/null || true
+            rm -rf "$lib_backup_dir"
+        fi
         restart_service_safely unbound 30 || msg_error "Échec de la restauration"
         return 1
     }
+    rm -f "$ub_backup" "$cc_backup" 2>/dev/null || true
+    rm -rf "$lib_backup_dir" 2>/dev/null || true
 
     msg_ok "Unbound mis à jour: ${current_ver:-?} → ${latest_ver}"
 }
