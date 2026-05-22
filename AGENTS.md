@@ -67,15 +67,26 @@ You MUST use agentmemory **proactively** at every stage of a session. Never wait
 - Si pas de résultats, chercher avec 2-3 termes alternatifs.
 - **Ne jamais démarrer une tâche sans avoir d'abord vérifié la mémoire.**
 
-### 2. After every bug fix — always save
-Sauvegarder systématiquement avec `memory_save`:
-- `type: "pattern"` (lessons/bugs) or `"decision"` (architecture)
-- Inclure: what broke, why, the fix, and the context
-- Tags: `bug`, `lesson-learned`, + tags techniques pertinents
-- **Only `memory_save`** — `memory_lesson_save` does not exist
+### 2. After every bug fix — always save a LESSON
+Les leçons sont stockées dans le store dédié `#lessons` (dashboard `http://localhost:3113/#lessons`), avec score de confiance, renforcement et dégradation. Utiliser l'API REST :
 
-### 3. After every architecture decision or significant refactor — always save
-Même règle qu'au point 2, avec `type: "decision"`.
+```bash
+curl -s -X POST http://localhost:3111/agentmemory/lessons \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "content": "what broke, why, the fix, and the context",
+    "context": "project-specific details",
+    "tags": ["lesson-learned", "bug", ...]
+  }'
+```
+
+Re-poster le même contenu renforce la leçon (augmente `confidence`).
+
+### 3. After every architecture decision or significant refactor — always save a MEMORY
+Utiliser `memory_save` (outil MCP `agentmemory_memory_save`) :
+- `type: "pattern"` ou `"decision"`
+- Inclure : what changed, why, files concernés
+- Tags techniques pertinents
 
 ### 4. After every session — verify
 - Call `memory_audit` pour confirmer que tout a bien été sauvegardé.

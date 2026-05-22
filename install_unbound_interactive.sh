@@ -315,41 +315,66 @@ validate_upstream() {
 # --- Auto-select fastest upstream by latency ---
 # Usage: auto_benchmark_upstream
 auto_benchmark_upstream() {
-    local fastest="" best_ms=99999 ms name ip
+    local fastest="" best_ms=99999 ms name
     local -A UPSTREAM_MAP=(
         [cloudflare]="1.1.1.1"
         [quad9]="9.9.9.9"
         [google]="8.8.8.8"
         [adguard]="94.140.14.14"
+        [mullvad]="194.242.2.2"
+        [controld]="76.76.2.0"
+        [dns0]="193.110.81.254"
     )
-    msg_info "Benchmark des upstreams DoT (10ms timeout)..."
+    local -A UPSTREAM_DISPLAY=(
+        [cloudflare]="Cloudflare"
+        [quad9]="Quad9"
+        [google]="Google"
+        [adguard]="AdGuard"
+        [mullvad]="Mullvad"
+        [controld]="ControlD"
+        [dns0]="DNS0.eu"
+    )
+    msg_info "Benchmark des upstreams DoT (5 mesures par upstream)..."
     for name in "${!UPSTREAM_MAP[@]}"; do
-        ip="${UPSTREAM_MAP[$name]}"
-        ms=$(timeout 3 dig @"$ip" google.com +short +timeout=1 +tries=1 2>/dev/null | \
-             head -1 >/dev/null && \
-             for _ in 1 2 3; do
-                 tstart=$(date +%s%N)
-                 dig @"$ip" google.com +short +timeout=2 +tries=1 &>/dev/null || true
-                 tdiff=$(( ($(date +%s%N) - tstart) / 1000000 ))
-                 echo "$tdiff"
-             done | awk '{s+=$1; c++} END {if(c>0) printf "%.0f", s/c}')
-        [[ -z "$ms" || "$ms" == "0" ]] && ms=99999
-        if (( ms < best_ms )); then
-            best_ms=$ms; fastest=$name
+        local ip="${UPSTREAM_MAP[$name]}"
+        local times=()
+        local ok=0
+        for sample in 1 2 3 4 5; do
+            local tstart elapsed
+            tstart=$(date +%s%N)
+            if dig @"$ip" google.com +short +tries=1 +timeout=2 &>/dev/null; then
+                elapsed=$(( ($(date +%s%N) - tstart) / 1000000 ))
+                times+=("$elapsed")
+                ((ok++))
+            fi
+        done
+
+        if (( ok == 0 )); then
+            msg_warn "  ${UPSTREAM_DISPLAY[$name]} (${ip}) → timeout"
+            continue
         fi
-        if [[ $ms -lt 99999 ]]; then
-            msg_ok "  ${name} (${ip}) → ${ms}ms"
-        else
-            msg_warn "  ${name} (${ip}) → timeout"
+
+        local sorted=()
+        mapfile -t sorted < <(sort -n <<<"${times[*]}")
+        local count=${#sorted[@]}
+        local sum=0 t avg median p95
+        for t in "${sorted[@]}"; do sum=$((sum + t)); done
+        avg=$((sum / count))
+        median="${sorted[$((count/2))]}"
+        p95="${sorted[$(( (count * 95) / 100 ))]}"
+
+        if (( p95 < best_ms )); then
+            best_ms=$p95; fastest=$name
         fi
+        msg_ok "  ${UPSTREAM_DISPLAY[$name]} (${ip}) → avg ${avg}ms | p50 ${median}ms | p95 ${p95}ms"
     done
     if [[ -n "$fastest" && "$best_ms" -lt 99999 ]]; then
         SELECTED_UPSTREAM="$fastest"
-        msg_ok "Upstream sélectionné: ${fastest} (${best_ms}ms)"
+        msg_ok "Upstream sélectionné: ${UPSTREAM_DISPLAY[$fastest]} (p95 ${best_ms}ms)"
     else
         msg_warn "Benchmark échoué, garde cloudflare par défaut"
     fi
-    log "Auto-upstream: ${SELECTED_UPSTREAM} (${best_ms}ms)"
+    log "Auto-upstream: ${SELECTED_UPSTREAM} (${best_ms}ms p95)"
 }
 
 # --- Network Optimization (Sysctl) ---
@@ -529,13 +554,24 @@ calculate_optimized_settings() {
     INFRA_HOSTS=$(( 10000 + (RAM_MB * 12) + (NUM_THREADS * 1000) ))
     (( INFRA_HOSTS > 100000 )) && INFRA_HOSTS=100000
 
-    OUTGOING_RANGE=$(( 512 + (NUM_THREADS * 256) + (RAM_MB / 4) ))
-    (( OUTGOING_RANGE < 512 )) && OUTGOING_RANGE=512
+    # Évalue les ports disponibles système pour caler outgoing-range
+    local sys_ports_high
+    sys_ports_high=$(sysctl -n net.ipv4.ip_local_port_range 2>/dev/null | awk '{print $2}' || echo 65535)
+    OUTGOING_RANGE=$(( 384 + (NUM_THREADS * 196) + (RAM_MB / 8) ))
+    (( OUTGOING_RANGE < 384 )) && OUTGOING_RANGE=384
+    (( OUTGOING_RANGE > sys_ports_high / 2 )) && OUTGOING_RANGE=$(( sys_ports_high / 2 ))
     (( OUTGOING_RANGE > 4096 )) && OUTGOING_RANGE=4096
 
     QUERIES_PER_THREAD=$(( 512 + (RAM_MB / (NUM_THREADS * 4)) ))
     (( QUERIES_PER_THREAD < 512 )) && QUERIES_PER_THREAD=512
     (( QUERIES_PER_THREAD > 2048 )) && QUERIES_PER_THREAD=2048
+
+    # EDNS buffer: plus grand = moins de truncation, plus petit = moins de fragmentation
+    if (( RAM_MB >= 2048 )); then
+        EDNS_BUFFER=1232
+    else
+        EDNS_BUFFER=512
+    fi
 
     if (( RAM_MB < 1024 )); then
         CACHE_MIN_TTL=60
@@ -557,9 +593,33 @@ calculate_optimized_settings() {
         SERVE_EXPIRED_CLIENT_TIMEOUT=2400
     fi
 
-    JOSTLE_TIMEOUT=$(( 120 + (NUM_THREADS * 20) + (RAM_MB / 256) ))
-    (( JOSTLE_TIMEOUT < 120 )) && JOSTLE_TIMEOUT=120
-    (( JOSTLE_TIMEOUT > 400 )) && JOSTLE_TIMEOUT=400
+    # JOSTLE_TIMEOUT : thread unique = pas de concurrence, on veut un timeout bas
+    # target-fetch-policy: moins agressif sur mono-cœur
+    if (( NUM_THREADS <= 1 )); then
+        TARGET_FETCH_POLICY='"1 0 0 0 0 0"'
+    else
+        TARGET_FETCH_POLICY='"2 1 0 0 0 0"'
+    fi
+
+    # infra-host-ttl : plus de infohosts = ttl plus long pour stabiliser
+    if (( INFRA_HOSTS >= 50000 )); then
+        INFRA_HOST_TTL=1800
+    else
+        INFRA_HOST_TTL=900
+    fi
+
+    JOSTLE_TIMEOUT=$(( 80 + (NUM_THREADS * 30) + (RAM_MB / 512) ))
+    (( JOSTLE_TIMEOUT < 80 )) && JOSTLE_TIMEOUT=80
+    (( JOSTLE_TIMEOUT > 500 )) && JOSTLE_TIMEOUT=500
+
+    # unwanted-reply-threshold : plus de RAM = plus de tolérance au trafic erroné
+    if (( RAM_MB >= 4096 )); then
+        UNWANTED_REPLY_THRESHOLD=10000000
+    elif (( RAM_MB >= 1024 )); then
+        UNWANTED_REPLY_THRESHOLD=1000000
+    else
+        UNWANTED_REPLY_THRESHOLD=10000
+    fi
 
     SO_REUSEPORT="yes"
     if (( NUM_THREADS == 1 )); then
@@ -683,14 +743,15 @@ ${anchor_directive}
     neg-cache-size: ${NEG_CACHE_SIZE}
 
     jostle-timeout: ${JOSTLE_TIMEOUT}
-    target-fetch-policy: "2 1 0 0 0 0"
+    target-fetch-policy: ${TARGET_FETCH_POLICY}
+    infra-host-ttl: ${INFRA_HOST_TTL}
 
     # --- Réseau ---
     so-reuseport: ${SO_REUSEPORT}
     so-rcvbuf: ${SO_RCVBUF}
     so-sndbuf: ${SO_SNDBUF}
-    edns-buffer-size: 1232
-    max-udp-size: 1232
+    edns-buffer-size: ${EDNS_BUFFER}
+    max-udp-size: ${EDNS_BUFFER}
     outgoing-range: ${OUTGOING_RANGE}
     num-queries-per-thread: ${QUERIES_PER_THREAD}
     infra-cache-numhosts: ${INFRA_HOSTS}
@@ -708,7 +769,7 @@ ${anchor_directive}
     prefetch-key: yes
     aggressive-nsec: yes
     serve-original-ttl: yes
-    unwanted-reply-threshold: 10000
+    unwanted-reply-threshold: ${UNWANTED_REPLY_THRESHOLD}
 
     # --- TCP & Connexions avancées ---
 ${_TCP_FEATURES}

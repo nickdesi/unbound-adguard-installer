@@ -372,7 +372,7 @@ test_performance_profile_boundaries() {
             fail "${ram}MB: outgoing-range hors bornes (${outgoing})"
         fi
 
-        if (( jostle >= 120 && jostle <= 400 )); then
+        if (( jostle >= 80 && jostle <= 500 )); then
             pass "${ram}MB: jostle-timeout borné (${jostle})"
         else
             fail "${ram}MB: jostle-timeout hors bornes (${jostle})"
