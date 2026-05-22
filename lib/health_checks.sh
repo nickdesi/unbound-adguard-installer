@@ -131,7 +131,7 @@ check_unbound_health() {
     # 1. Service status
     if ! systemctl is-active --quiet unbound; then
         msg_error "Service Unbound non actif"
-        ((errors++))
+        ((++errors))
     else
         msg_ok "Service Unbound actif"
     fi
@@ -152,7 +152,7 @@ check_unbound_health() {
     if [[ "$checkconf_ok" != "true" ]]; then
         msg_error "Configuration Unbound invalide"
         printf '%s\n' "$checkconf_output" | head -n 10
-        ((errors++))
+        ((++errors))
     else
         msg_ok "Configuration Unbound valide"
     fi
@@ -160,14 +160,14 @@ check_unbound_health() {
     # 3. Port listening
     if ! ss -tulnp | grep -q ":${UNBOUND_PORT:-5335}\s.*unbound"; then
         msg_error "Unbound n'écoute pas sur le port ${UNBOUND_PORT:-5335}"
-        ((errors++))
+        ((++errors))
     else
         msg_ok "Unbound écoute sur le port ${UNBOUND_PORT:-5335}"
     fi
     
     # 4. DNS resolution test
     if ! test_unbound_resolution; then
-        ((errors++))
+        ((++errors))
     fi
     
     # 5. Cache stats
@@ -194,7 +194,7 @@ check_adguard_health() {
     # 1. Service status
     if ! systemctl is-active --quiet AdGuardHome; then
         msg_error "Service AdGuard Home non actif"
-        ((errors++))
+        ((++errors))
     else
         msg_ok "Service AdGuard Home actif"
     fi
@@ -202,7 +202,7 @@ check_adguard_health() {
     # 2. Config file exists
     if [[ ! -f "${AGH_YAML:-/opt/AdGuardHome/AdGuardHome.yaml}" ]]; then
         msg_error "Fichier de configuration AdGuard introuvable"
-        ((errors++))
+        ((++errors))
     else
         msg_ok "Fichier de configuration AdGuard présent"
     fi
@@ -210,7 +210,7 @@ check_adguard_health() {
     # 3. Web port listening
     if ! is_port_listening "$agh_port"; then
         msg_error "AdGuard Home n'écoute pas sur le port ${agh_port}"
-        ((errors++))
+        ((++errors))
     else
         msg_ok "AdGuard Home écoute sur le port ${agh_port}"
     fi
@@ -230,7 +230,7 @@ check_adguard_health() {
             msg_ok "AdGuard utilise bien Unbound comme upstream"
         else
             msg_warn "AdGuard n'utilise peut-être pas Unbound"
-            ((errors++))
+            ((++errors))
         fi
     fi
     
@@ -340,7 +340,7 @@ benchmark_dns_performance() {
             local elapsed=$(( ($(date +%s%N) - tstart) / 1000000 ))
             echo "$elapsed" >> "$results_file"
         else
-            ((fails++))
+            ((++fails))
         fi
     done
 

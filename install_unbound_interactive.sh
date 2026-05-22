@@ -1159,7 +1159,7 @@ update_script() {
     msg_info "Mise à jour du dépôt local (script + lib)..."
 
     local archive_url="https://codeload.github.com/${UPDATE_REPO}/tar.gz/${UPDATE_REF}"
-    local tmp_dir tmp_tar remote_version remote_sha local_sha
+    local tmp_dir tmp_tar remote_version
     tmp_dir=$(mktemp -d /tmp/agh_update.XXXXXX)
     tmp_tar="${tmp_dir}/repo.tar.gz"
 
@@ -1168,9 +1168,6 @@ update_script() {
         rm -rf "$tmp_dir"
         return 1
     fi
-
-    local_sha=$(sha256sum "$tmp_tar" | awk '{print $1}')
-    remote_sha=$(fetch_json_api "https://api.github.com/repos/${UPDATE_REPO}/git/ref/heads/${UPDATE_REF}" | jq -r '.object.sha // empty' 2>/dev/null || true)
 
     tar -tzf "$tmp_tar" >/dev/null 2>&1 || {
         msg_error "Archive de mise à jour invalide"
@@ -1188,6 +1185,9 @@ update_script() {
     fi
 
     if [[ "$DRY_RUN" == "true" ]]; then
+        local local_sha remote_sha
+        local_sha=$(sha256sum "$tmp_tar" | awk '{print $1}')
+        remote_sha=$(fetch_json_api "https://api.github.com/repos/${UPDATE_REPO}/git/ref/heads/${UPDATE_REF}" | jq -r '.object.sha // empty' 2>/dev/null || true)
         echo "  [DRY-RUN] SHA256 archive: ${local_sha}"
         [[ -n "$remote_sha" ]] && echo "  [DRY-RUN] Commit distant: ${remote_sha:0:7}"
         echo "  [DRY-RUN] Copie ${tmp_dir}/install_unbound_interactive.sh -> ${SCRIPT_DIR}/install_unbound_interactive.sh"
@@ -1274,7 +1274,7 @@ show_menu() {
             "2" "  Reparer / Reconfigurer   Unbound + AdGuard upstream" \
             "3" "  Diagnostics              Health check complet + benchmark" \
             "4" "  Statistiques Unbound     Cache, requetes, performances" \
-            "5" "  MAJ Unbound              Compiler derniere version depuis GitHub" \
+            "5" "  MAJ Unbound              apt upgrade vers derniere version dispo" \
             "6" "  MAJ Systeme              apt update + upgrade" \
             "7" "  MAJ Script               Depuis GitHub" \
             "8" "  Reset mot de passe       AdGuard Home" \
@@ -1565,7 +1565,6 @@ main() {
             ;;
         --update-unbound)
             header_info
-            check_root
             update_unbound_daemon
             ;;
         --uninstall)

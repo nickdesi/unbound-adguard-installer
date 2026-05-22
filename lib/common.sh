@@ -38,7 +38,7 @@ STEP_TOTAL=0
 wait_for_file() {
     local file="$1" timeout="${2:-30}" elapsed=0
     while [[ ! -f "$file" ]] && (( elapsed < timeout )); do
-        sleep 1; (( elapsed++ ))
+        sleep 1; ((++elapsed))
     done
     [[ -f "$file" ]]
 }
@@ -119,7 +119,7 @@ download_with_retry() {
             fi
         fi
         
-        ((retry_count++))
+        ((++retry_count))
         if (( retry_count < max_retries )); then
             msg_warn "Échec téléchargement, nouvelle tentative dans 3s... ($retry_count/$max_retries)"
             sleep 3
@@ -148,7 +148,7 @@ fetch_json_api() {
             return 0
         fi
         
-        ((retry_count++))
+        ((++retry_count))
         if (( retry_count < max_retries )); then
             sleep 2
         fi
@@ -352,7 +352,7 @@ restart_service_safely() {
             return 0
         fi
         sleep 1
-        ((elapsed++))
+        ((++elapsed))
     done
     
     msg_error "Timeout: $service n'est pas devenu actif après ${timeout}s"
