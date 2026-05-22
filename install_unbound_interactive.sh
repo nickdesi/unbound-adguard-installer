@@ -548,7 +548,10 @@ calculate_optimized_settings() {
     elif (( RAM_MB < 4096 )); then
         SO_RCVBUF="2m"; SO_SNDBUF="2m"
     else
-        SO_RCVBUF="4m"; SO_SNDBUF="4m"
+        local buf_mb=$(( NUM_THREADS * 2 ))
+        if (( buf_mb < 4 )); then buf_mb=4; fi
+        if (( buf_mb > 8 )); then buf_mb=8; fi
+        SO_RCVBUF="${buf_mb}m"; SO_SNDBUF="${buf_mb}m"
     fi
 
     INFRA_HOSTS=$(( 10000 + (RAM_MB * 12) + (NUM_THREADS * 1000) ))
@@ -620,6 +623,19 @@ calculate_optimized_settings() {
     else
         UNWANTED_REPLY_THRESHOLD=10000
     fi
+
+    # TCP concurrency: mono-cœur épuise vite 10 connexions entrantes par défaut
+    if (( NUM_THREADS <= 1 )); then
+        INCOMING_NUM_TCP=3; OUTGOING_NUM_TCP=5; RATELIMIT_VAL=200
+    elif (( NUM_THREADS <= 3 )); then
+        INCOMING_NUM_TCP=5; OUTGOING_NUM_TCP=10; RATELIMIT_VAL=500
+    else
+        INCOMING_NUM_TCP=10; OUTGOING_NUM_TCP=20; RATELIMIT_VAL=1000
+    fi
+
+    # NSEC agressif = requêtes supplémentaires, gaspillage sur faible RAM
+    AGGRESSIVE_NSEC="yes"
+    (( RAM_MB < 1024 )) && AGGRESSIVE_NSEC="no"
 
     SO_REUSEPORT="yes"
     if (( NUM_THREADS == 1 )); then
@@ -772,12 +788,16 @@ ${anchor_directive}
     unwanted-reply-threshold: ${UNWANTED_REPLY_THRESHOLD}
 
     # --- TCP & Connexions avancées ---
+    incoming-num-tcp: ${INCOMING_NUM_TCP}
+    outgoing-num-tcp: ${OUTGOING_NUM_TCP}
 ${_TCP_FEATURES}
-    ratelimit: 1000
+    ratelimit: ${RATELIMIT_VAL}
 
     # --- Sécurité & Vie privée ---
+    aggressive-nsec: ${AGGRESSIVE_NSEC}
     hide-identity: yes
     hide-version: yes
+    deny-any: yes
     harden-glue: yes
     harden-dnssec-stripped: yes
     harden-algo-downgrade: yes
