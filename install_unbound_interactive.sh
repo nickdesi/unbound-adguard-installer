@@ -1249,7 +1249,7 @@ update_unbound_daemon() {
     msg_info "Installation des dépendances de compilation..."
     apt-get install -y --no-install-recommends \
         build-essential libevent-dev libssl-dev libnghttp2-dev \
-        bison flex libsystemd-dev 2>&1 | tail -1
+        libexpat1-dev bison flex libsystemd-dev 2>&1 | tail -1
 
     local tmp_dir="/tmp/unbound-build"
     rm -rf "$tmp_dir" && mkdir -p "$tmp_dir"
