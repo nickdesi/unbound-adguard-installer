@@ -355,7 +355,7 @@ auto_benchmark_upstream() {
         fi
 
         local sorted=()
-        mapfile -t sorted < <(sort -n <<<"${times[*]}")
+        mapfile -t sorted < <(printf '%s\n' "${times[@]}" | sort -n)
         local count=${#sorted[@]}
         local sum=0 t avg median p95
         for t in "${sorted[@]}"; do sum=$((sum + t)); done
