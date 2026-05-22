@@ -1255,17 +1255,36 @@ update_unbound_daemon() {
     rm -rf "$tmp_dir" && mkdir -p "$tmp_dir"
 
     msg_info "Téléchargement des sources Unbound ${latest_ver}..."
-    if ! curl -sSL --max-time 60 \
-        -o "${tmp_dir}/unbound.tar.gz" \
-        "https://nlnetlabs.nl/downloads/unbound/unbound-${latest_ver}.tar.gz"; then
+    local tarball_url="https://nlnetlabs.nl/downloads/unbound/unbound-${latest_ver}.tar.gz"
+    if ! curl -sSL --max-time 120 -o "${tmp_dir}/unbound.tar.gz" "$tarball_url"; then
         msg_error "Échec du téléchargement"
+        rm -rf "$tmp_dir"; return 1
+    fi
+
+    # Vérifie que l'archive est valide
+    if ! tar tzf "${tmp_dir}/unbound.tar.gz" &>/dev/null; then
+        msg_error "Archive corrompue — téléchargement incomplet"
         rm -rf "$tmp_dir"; return 1
     fi
 
     tar xzf "${tmp_dir}/unbound.tar.gz" -C "$tmp_dir"
     local src_dir
     src_dir=$(find "$tmp_dir" -maxdepth 1 -type d -name 'unbound-*' | head -1)
-    [[ -z "$src_dir" ]] && { msg_error "Sources introuvables"; rm -rf "$tmp_dir"; return 1; }
+    if [[ -z "$src_dir" ]]; then
+        msg_error "Sources introuvables après extraction"
+        ls -la "$tmp_dir" >&2
+        rm -rf "$tmp_dir"; return 1
+    fi
+
+    # Si configure manque (tarball brut sans autoconf), on le génère
+    if [[ ! -x "$src_dir/configure" ]]; then
+        msg_warn "configure non présent — génération avec autoreconf..."
+        apt-get install -y --no-install-recommends autoconf automake libtool &>/dev/null
+        (cd "$src_dir" && autoreconf -fi) 2>&1 | tee -a "$LOG_FILE" || {
+            msg_error "autoreconf a échoué"
+            rm -rf "$tmp_dir"; return 1
+        }
+    fi
 
     cd "$src_dir" || { rm -rf "$tmp_dir"; return 1; }
 
