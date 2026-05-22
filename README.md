@@ -1,7 +1,7 @@
 # AdGuard Home + Unbound Installer pour Proxmox LXC
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-3.4.2-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-3.5.0-blue.svg)](CHANGELOG.md)
 [![Shell](https://img.shields.io/badge/shell-Bash-89e051.svg)](https://www.gnu.org/software/bash/)
 [![Platform](https://img.shields.io/badge/platform-Proxmox%20LXC-orange.svg)](https://www.proxmox.com/)
 
@@ -73,8 +73,11 @@ Le script ajuste automatiquement Unbound selon les ressources du LXC :
 | Cache rrset/msg | Calcul dynamique à partir de la RAM détectée, avec ratio maintenu à 2:1 |
 | Key/neg cache | Dimensionnés automatiquement avec bornes minimales et maximales |
 | Concurrence | `outgoing-range` et `num-queries-per-thread` ajustés selon RAM + CPU, bornés pour stabilité |
-| Buffers socket | Adaptés par paliers mémoire pour éviter la surconsommation |
-| Latence/résilience | `jostle-timeout` et `serve-expired-*` ajustés dynamiquement selon la mémoire disponible |
+| Concurrence TCP | `incoming-num-tcp` / `outgoing-num-tcp` adaptés au nombre de threads (3/5 → 10/20) |
+| Buffers socket | `so-rcvbuf` / `so-sndbuf` scalés par threads (1m → 8m) |
+| Latence/résilience | `jostle-timeout`, `serve-expired-*`, `target-fetch-policy` ajustés dynamiquement |
+| Réseau | `edns-buffer-size` dynamique (512 ou 1232), `outgoing-range` capé par `ip_local_port_range` |
+| Anti-DDoS | `ratelimit` scalaire (200–1000), `deny-any: yes`, `unwanted-reply-threshold` par RAM |
 
 Exemples indicatifs (4 vCPU) :
 
@@ -97,8 +100,9 @@ Optimisations incluses :
 ### Sécurité DNS
 
 - DNS-over-TLS avec fournisseurs au choix : `cloudflare`, `quad9`, `google`, `adguard`.
+- Benchmark auto des upstreams : p50/p95 sur 7 résolveurs (Cloudflare, Quad9, Google, AdGuard, Mullvad, ControlD, DNS0.eu).
 - DNSSEC activé côté Unbound et AdGuard Home.
-- Confidentialité Unbound : `hide-identity`, `hide-version`, `qname-minimisation`.
+- Confidentialité Unbound : `hide-identity`, `hide-version`, `qname-minimisation`, `deny-any`.
 - Protection des plages privées RFC1918.
 
 ---
@@ -192,10 +196,12 @@ Options:
   --benchmark [n]      Tester les performances DNS (défaut: 300 requêtes)
   --update             Mettre à jour le script depuis GitHub
   --uninstall          Désinstaller AdGuard Home et Unbound
-  --upstream <nom>     cloudflare | quad9 | google | adguard
-  --dry-run            Simuler les actions sans modifier le système
-  --allow-proxmox-host Autoriser l’exécution sur le nœud Proxmox (déconseillé)
-  --help               Afficher l’aide
+  --update-unbound     Mettre à jour Unbound via apt (version distro)
+  --auto-upstream       Benchmark DoT + sélection automatique du plus rapide
+  --upstream <nom>      cloudflare | quad9 | google | adguard
+  --dry-run             Simuler les actions sans modifier le système
+  --allow-proxmox-host  Autoriser l'exécution sur le nœud Proxmox (déconseillé)
+  --help                Afficher l'aide
 ```
 
 Exemples :
@@ -246,13 +252,16 @@ Le menu affiche le statut des services et l’upstream actif.
 | # | Action | Description |
 |---|--------|-------------|
 | 1 | Installer | Déploiement complet + vérification finale |
-| 2 | Réparer / Reconfigurer | Recalibre Unbound et réapplique l’upstream AdGuard |
+| 2 | Réparer / Reconfigurer | Recalibre Unbound et réapplique l'upstream AdGuard |
 | 3 | Health Check | Diagnostics DNS + benchmark |
 | 4 | Stats Unbound | Statistiques cache via `unbound-control` |
-| 5 | MAJ Système | `apt-get update && apt-get upgrade` |
-| 6 | MAJ Script | Met à jour le script depuis GitHub |
-| 7 | Désinstaller | Suppression AdGuard Home + Unbound |
-| 8 | Quitter | Ferme le menu |
+| 5 | MAJ Unbound | `apt install --only-upgrade unbound` |
+| 6 | MAJ Système | `apt-get update && apt-get upgrade` |
+| 7 | MAJ Script | Met à jour le script depuis GitHub |
+| 8 | Reset mot de passe | Réinitialise le mot de passe AdGuard Home |
+| 9 | Désinstaller | Suppression AdGuard Home + Unbound |
+| 10 | Auto-Upstream | Benchmark 7 fournisseurs DoT + sélection auto |
+| 11 | Quitter | Ferme le menu |
 
 ### Après installation
 

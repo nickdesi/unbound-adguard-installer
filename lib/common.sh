@@ -209,7 +209,7 @@ count_cpuset_cpus() {
             end=${BASH_REMATCH[2]}
             (( end >= start )) && (( total += end - start + 1 ))
         elif [[ "$part" =~ ^[0-9]+$ ]]; then
-            (( total++ ))
+            (( ++total ))
         fi
     done
 

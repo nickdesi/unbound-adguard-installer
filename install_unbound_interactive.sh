@@ -66,7 +66,7 @@ if [[ -f "${SCRIPT_DIR}/lib/health_checks.sh" ]]; then
 fi
 
 # --- Global Constants ---
-readonly SCRIPT_VERSION="3.4.2"
+readonly SCRIPT_VERSION="3.5.0"
 readonly UNBOUND_PORT=5335
 readonly AGH_INSTALL_DIR="/opt/AdGuardHome"
 readonly AGH_BINARY="${AGH_INSTALL_DIR}/AdGuardHome"
