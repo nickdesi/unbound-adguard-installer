@@ -345,7 +345,7 @@ auto_benchmark_upstream() {
             if dig @"$ip" google.com +short +tries=1 +timeout=2 &>/dev/null; then
                 elapsed=$(( ($(date +%s%N) - tstart) / 1000000 ))
                 times+=("$elapsed")
-                ((ok++))
+                ((++ok))
             fi
         done
 
