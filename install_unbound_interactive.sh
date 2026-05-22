@@ -1340,7 +1340,8 @@ show_menu() {
             "7" "  MAJ Script               Depuis GitHub" \
             "8" "  Reset mot de passe       AdGuard Home" \
             "9" "  Desinstaller             Supprimer AdGuard Home + Unbound" \
-            "10" " Quitter") || exit 0
+            "10" "  Auto-Upstream            Benchmark DoT + selection auto" \
+            "11" " Quitter") || exit 0
 
         case $choice in
                 1)
@@ -1428,7 +1429,15 @@ show_menu() {
                     uninstall_all
                 fi
                 ;;
-            10) exit 0 ;;
+            10)
+                auto_benchmark_upstream
+                msg_info "Application du nouvel upstream: ${SELECTED_UPSTREAM}"
+                install_unbound
+                configure_adguard_upstream
+                whiptail --title " Auto-Upstream " \
+                    --msgbox "Upstream selectionne: ${SELECTED_UPSTREAM}\n\nUnbound et AdGuard Home reconfigures automatiquement." 10 58
+                ;;
+            11) exit 0 ;;
         esac
     done
 }
