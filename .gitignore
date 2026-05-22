@@ -13,6 +13,5 @@
 .idea/
 __pycache__/
 
-graphify-out/
 data/
 .opencode/commands/
