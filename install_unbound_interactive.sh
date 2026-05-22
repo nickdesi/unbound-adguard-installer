@@ -1286,19 +1286,20 @@ update_unbound_daemon() {
 
     cd "$src_dir" || { rm -rf "$tmp_dir"; return 1; }
 
-    msg_info "Configuration et compilation (flags Debian compatibles)..."
+    msg_info "Configuration (flags Debian — log: $LOG_FILE)..."
     ./configure \
         --prefix=/usr --sysconfdir=/etc \
         --with-libevent --enable-tfo-client --enable-tfo-server \
         --enable-systemd --with-chroot-dir= \
         --with-pidfile=/run/unbound.pid \
         --with-rootkey-file=/usr/share/dns/root.key \
-        --disable-rpath --disable-maintainer-mode 2>&1 | tee -a "$LOG_FILE" || {
+        --disable-rpath --disable-maintainer-mode >> "$LOG_FILE" 2>&1 || {
             msg_error "Échec de la configuration — voir $LOG_FILE"
             rm -rf "$tmp_dir"; return 1
         }
 
-    make -j"$(nproc)" 2>&1 | tee -a "$LOG_FILE" || {
+    msg_info "Compilation (make -j$(nproc) — log: $LOG_FILE)..."
+    make -j"$(nproc)" >> "$LOG_FILE" 2>&1 || {
         msg_error "Échec de la compilation — voir $LOG_FILE"
         rm -rf "$tmp_dir"; return 1
     }
