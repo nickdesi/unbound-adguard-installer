@@ -57,12 +57,28 @@ Unbound config: `/etc/unbound/unbound.conf.d/99-adguard-unbound-installer.conf`.
 - **Commits** follow Conventional Commits (`feat:`, `fix:`, `perf:`, `chore:`, `docs:`, `refactor:`, `test:`).
 - **`docs/` directory** is referenced in `CONTRIBUTING.md` but does not exist in the repo.
 
-## Agent Memory (mandatory)
+## Agent Memory (mandatory — fully autonomous, no prompting)
 
-After **every bug fix**, save the lesson to agentmemory with `agentmemory_memory_save`:
+You MUST use agentmemory **proactively** at every stage of a session. Never wait for the user to ask.
+
+### 1. Session start — always recall context
+- Call `memory_recall` avec le sujet de la session pour retrouver le contexte des sessions passées.
+- Call `memory_smart_search` avec les mêmes termes pour croiser les résultats.
+- Si pas de résultats, chercher avec 2-3 termes alternatifs.
+- **Ne jamais démarrer une tâche sans avoir d'abord vérifié la mémoire.**
+
+### 2. After every bug fix — always save
+Sauvegarder systématiquement avec `memory_save`:
 - `type: "pattern"` (lessons/bugs) or `"decision"` (architecture)
-- Include: what broke, why, the fix, and the context
-- Tag with `bug`, `lesson-learned`, and relevant tech tags
+- Inclure: what broke, why, the fix, and the context
+- Tags: `bug`, `lesson-learned`, + tags techniques pertinents
 - **Only `memory_save`** — `memory_lesson_save` does not exist
+
+### 3. After every architecture decision or significant refactor — always save
+Même règle qu'au point 2, avec `type: "decision"`.
+
+### 4. After every session — verify
+- Call `memory_audit` pour confirmer que tout a bien été sauvegardé.
+- Si un insight a été oublié, le sauvegarder immédiatement.
 
 
