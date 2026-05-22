@@ -1222,28 +1222,108 @@ update_unbound_daemon() {
     local current_ver
     current_ver="$(unbound -V 2>/dev/null | head -1 | sed 's/.*Version //')"
 
-    msg_info "Mise à jour d'Unbound via apt..."
+    msg_info "Vérification de la dernière version Unbound..."
 
-    apt-get update >> "$LOG_FILE" 2>&1 || { msg_error "Échec d'apt update"; return 1; }
-
-    local avail_ver
-    avail_ver=$(apt-cache policy unbound 2>/dev/null | grep 'Candidate:' | awk '{print $2}')
-    if [[ -z "$avail_ver" ]]; then
-        msg_error "Impossible de déterminer la version disponible"
+    local latest_ver
+    if ! latest_ver=$(curl -sSf --max-time 10 "https://api.github.com/repos/NLnetLabs/unbound/releases/latest" 2>/dev/null | grep -oP '"tag_name": "\K[^"]+'); then
+        msg_error "Impossible de contacter GitHub API"
         return 1
     fi
+    latest_ver="${latest_ver#release-}"
+    [[ -z "$latest_ver" ]] && { msg_error "Format de version inconnu"; return 1; }
 
-    if [[ -n "$current_ver" ]] && dpkg --compare-versions "$current_ver" ge "$avail_ver"; then
+    msg_info "Actuelle: ${current_ver:-?} / Dernière: ${latest_ver}"
+
+    if [[ -n "$current_ver" ]] && _version_ge "$current_ver" "$latest_ver"; then
         msg_ok "Unbound déjà à jour (v${current_ver})"
         return 0
     fi
 
-    apt-get install --only-upgrade -y unbound ca-certificates dnsutils >> "$LOG_FILE" 2>&1 || {
-        msg_error "Échec de la mise à jour Unbound"
+    whiptail --title " Mise à jour Unbound " \
+        --yesno "Version actuelle : ${current_ver:-?}\nNouvelle version : ${latest_ver}\n\nCompilation depuis les sources (~5-30 min selon CPU).\nUn .deb sera créé via checkinstall (rollback = apt install --reinstall unbound).\n\nContinuer ?" 14 60 || {
+        msg_info "Mise à jour annulée"; return 0
+    }
+
+    # Build deps
+    local build_deps=(build-essential libssl-dev libexpat1-dev bison flex)
+    local missing_deps=()
+    for dep in "${build_deps[@]}"; do
+        dpkg-query -W -f='${Status}' "$dep" 2>/dev/null | grep -q 'install ok installed' || missing_deps+=("$dep")
+    done
+    if ((${#missing_deps[@]} > 0)); then
+        msg_info "Installation des dépendances de compilation (${#missing_deps[@]} paquet(s))..."
+        apt-get install -y --no-install-recommends "${missing_deps[@]}" >> "$LOG_FILE" 2>&1 || {
+            msg_error "Échec de l'installation des dépendances"; return 1
+        }
+    else
+        msg_ok "Dépendances de compilation déjà installées"
+    fi
+
+    # checkinstall
+    if ! command -v checkinstall &>/dev/null; then
+        msg_info "Installation de checkinstall..."
+        apt-get install -y --no-install-recommends checkinstall >> "$LOG_FILE" 2>&1 || {
+            msg_error "checkinstall indisponible — impossible de créer un .deb"
+            return 1
+        }
+    fi
+
+    local tmp_dir="/tmp/unbound-build"
+    rm -rf "$tmp_dir" && mkdir -p "$tmp_dir"
+
+    msg_info "Téléchargement des sources Unbound ${latest_ver}..."
+    local tarball_url="https://nlnetlabs.nl/downloads/unbound/unbound-${latest_ver}.tar.gz"
+    if ! curl -sSL --max-time 120 -o "${tmp_dir}/unbound.tar.gz" "$tarball_url"; then
+        msg_error "Échec du téléchargement"; rm -rf "$tmp_dir"; return 1
+    fi
+
+    if ! tar tzf "${tmp_dir}/unbound.tar.gz" &>/dev/null; then
+        msg_error "Archive corrompue"; rm -rf "$tmp_dir"; return 1
+    fi
+
+    tar xzf "${tmp_dir}/unbound.tar.gz" -C "$tmp_dir"
+    local src_dir="${tmp_dir}/unbound-${latest_ver}"
+    [[ ! -d "$src_dir" ]] && { msg_error "Sources introuvables"; rm -rf "$tmp_dir"; return 1; }
+
+    cd "$src_dir" || { rm -rf "$tmp_dir"; return 1; }
+
+    msg_info "Configuration (log: $LOG_FILE)..."
+    ./configure \
+        --prefix=/usr --sysconfdir=/etc \
+        --with-libevent --enable-tfo-client --enable-tfo-server \
+        --enable-systemd --with-chroot-dir= \
+        --with-pidfile=/run/unbound.pid \
+        --with-rootkey-file=/usr/share/dns/root.key \
+        --disable-rpath --disable-maintainer-mode >> "$LOG_FILE" 2>&1 || {
+        msg_error "Échec de la configuration — voir $LOG_FILE"; rm -rf "$tmp_dir"; return 1
+    }
+
+    msg_info "Compilation (make -j$(nproc) — log: $LOG_FILE)..."
+    make -j"$(nproc)" >> "$LOG_FILE" 2>&1 || {
+        msg_error "Échec de la compilation — voir $LOG_FILE"; rm -rf "$tmp_dir"; return 1
+    }
+
+    msg_info "Création du paquet .deb avec checkinstall..."
+    checkinstall --install=yes --fstrans=yes --pkgname=unbound \
+        --pkgversion="${latest_ver}" --pkgrelease=1 --pkgsource="https://nlnetlabs.nl" \
+        --maintainer="unbound@nlnetlabs.nl" --requires="libevent-2.1-7,libssl3,libc6,libsystemd0" \
+        --nodoc --default >> "$LOG_FILE" 2>&1 || {
+        msg_error "Échec checkinstall — restauration via apt..."
+        apt-get install --reinstall -y unbound >> "$LOG_FILE" 2>&1 || true
+        rm -rf "$tmp_dir"
+        return 1
+    }
+    rm -rf "$tmp_dir"
+
+    msg_info "Redémarrage d'Unbound..."
+    restart_service_safely unbound 30 || {
+        msg_error "Échec du démarrage — restauration de l'ancien paquet..."
+        apt-get install --reinstall -y unbound >> "$LOG_FILE" 2>&1 || true
+        restart_service_safely unbound 30 || msg_error "Impossible de restaurer Unbound"
         return 1
     }
 
-    msg_ok "Unbound mis à jour: ${current_ver:-?} → ${avail_ver}"
+    msg_ok "Unbound mis à jour: ${current_ver:-?} → ${latest_ver}"
 }
 
 show_menu() {
@@ -1384,7 +1464,7 @@ show_help() {
     echo -e "  ${YW}--install${CL}            Installation complète (AdGuard Home + Unbound)"
     echo -e "  ${YW}--repair${CL}             Reconfigurer Unbound + AdGuard (sans réinstaller)"
     echo -e "  ${YW}--unbound-only${CL}       Installer/reconfigurer uniquement Unbound"
-    echo -e "  ${YW}--update-unbound${CL}     Mettre à jour Unbound via apt (dernière version disponible)"
+    echo -e "  ${YW}--update-unbound${CL}     Compiler la dernière version Unbound avec checkinstall (.deb)"
     echo -e "  ${YW}--update${CL}             Mettre à jour ce script depuis GitHub"
     echo -e "  ${YW}--uninstall${CL}          Désinstaller AdGuard Home et Unbound"
     echo -e "  ${YW}--health${CL}             Exécuter le health check complet"
