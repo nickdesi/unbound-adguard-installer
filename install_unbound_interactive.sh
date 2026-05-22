@@ -308,6 +308,46 @@ validate_upstream() {
     return 1
 }
 
+# --- Auto-select fastest upstream by latency ---
+# Usage: auto_benchmark_upstream
+auto_benchmark_upstream() {
+    local fastest="" best_ms=99999 ms name ip
+    local -A UPSTREAM_MAP=(
+        [cloudflare]="1.1.1.1"
+        [quad9]="9.9.9.9"
+        [google]="8.8.8.8"
+        [adguard]="94.140.14.14"
+    )
+    msg_info "Benchmark des upstreams DoT (10ms timeout)..."
+    for name in "${!UPSTREAM_MAP[@]}"; do
+        ip="${UPSTREAM_MAP[$name]}"
+        ms=$(timeout 3 dig @"$ip" google.com +short +timeout=1 +tries=1 2>/dev/null | \
+             head -1 >/dev/null && \
+             for _ in 1 2 3; do
+                 tstart=$(date +%s%N)
+                 dig @"$ip" google.com +short +timeout=2 +tries=1 &>/dev/null || true
+                 tdiff=$(( ($(date +%s%N) - tstart) / 1000000 ))
+                 echo "$tdiff"
+             done | awk '{s+=$1; c++} END {if(c>0) printf "%.0f", s/c}')
+        [[ -z "$ms" || "$ms" == "0" ]] && ms=99999
+        if (( ms < best_ms )); then
+            best_ms=$ms; fastest=$name
+        fi
+        if [[ $ms -lt 99999 ]]; then
+            msg_ok "  ${name} (${ip}) → ${ms}ms"
+        else
+            msg_warn "  ${name} (${ip}) → timeout"
+        fi
+    done
+    if [[ -n "$fastest" && "$best_ms" -lt 99999 ]]; then
+        SELECTED_UPSTREAM="$fastest"
+        msg_ok "Upstream sélectionné: ${fastest} (${best_ms}ms)"
+    else
+        msg_warn "Benchmark échoué, garde cloudflare par défaut"
+    fi
+    log "Auto-upstream: ${SELECTED_UPSTREAM} (${best_ms}ms)"
+}
+
 # --- Network Optimization (Sysctl) ---
 
 apply_sysctl_tuning() {
@@ -716,6 +756,16 @@ EOF
 
     if [[ "$checkconf_ok" == "true" ]]; then
         systemctl enable unbound &>/dev/null
+
+        # Cache persistence: dump on stop, load on start
+        mkdir -p /etc/systemd/system/unbound.service.d
+        cat > /etc/systemd/system/unbound.service.d/cache-persist.conf <<'CACHEEOF'
+[Service]
+ExecStartPre=-/bin/sh -c '/usr/sbin/unbound-control -s 127.0.0.1@8953 load_cache < /var/lib/unbound/cache.dump 2>/dev/null || true'
+ExecStop=-/bin/sh -c '/usr/sbin/unbound-control -s 127.0.0.1@8953 dump_cache > /var/lib/unbound/cache.dump 2>/dev/null || true'
+CACHEEOF
+        systemctl daemon-reload &>/dev/null
+
         restart_service_safely unbound 30 || { msg_error "Échec redémarrage sécurisé Unbound"; exit 1; }
         msg_ok "Configuration Unbound valide et service redémarré"
 
@@ -736,25 +786,44 @@ prewarm_unbound_cache() {
 
     msg_info "Préchauffage du cache Unbound..."
 
-    local domains=(
-        google.com www.google.com dns.google.com
-        cloudflare.com www.cloudflare.com 1.1.1.1
-        github.com api.github.com raw.githubusercontent.com
-        facebook.com www.facebook.com
-        amazon.com www.amazon.com aws.amazon.com
-        microsoft.com www.microsoft.com login.microsoftonline.com
-        apple.com www.apple.com icloud.com
-        netflix.com www.netflix.com
-        twitter.com x.com t.co
-        youtube.com www.youtube.com
-        wikipedia.org en.wikipedia.org
-        reddit.com www.reddit.com
-        stackoverflow.com cdn.sstatic.net
-        npmjs.com registry.npmjs.org
-        docker.com hub.docker.com
-        debian.org security.debian.org
-        ubuntu.com archive.ubuntu.com
-    )
+    local domains=()
+
+    # Try to read top domains from AdGuard Home query log
+    local agh_log="/opt/AdGuardHome/data/querylog.json"
+    if [[ -f "$agh_log" ]] && command -v jq &>/dev/null; then
+        local log_domains
+        log_domains=$(jq -r 'select(.Q != null) | .Q' "$agh_log" 2>/dev/null | \
+            sed 's/.*@//' | awk -F. '{if(NF>=2) print $(NF-1)"."$NF}' | \
+            sort | uniq -c | sort -rn | head -40 | awk '{print $2}')
+        if [[ -n "$log_domains" ]]; then
+            while IFS= read -r d; do
+                domains+=("$d")
+            done <<< "$log_domains"
+        fi
+    fi
+
+    # Fallback to static common domains
+    if [[ ${#domains[@]} -eq 0 ]]; then
+        domains=(
+            google.com www.google.com dns.google.com
+            cloudflare.com www.cloudflare.com 1.1.1.1
+            github.com api.github.com raw.githubusercontent.com
+            facebook.com www.facebook.com
+            amazon.com www.amazon.com aws.amazon.com
+            microsoft.com www.microsoft.com login.microsoftonline.com
+            apple.com www.apple.com icloud.com
+            netflix.com www.netflix.com
+            twitter.com x.com t.co
+            youtube.com www.youtube.com
+            wikipedia.org en.wikipedia.org
+            reddit.com www.reddit.com
+            stackoverflow.com cdn.sstatic.net
+            npmjs.com registry.npmjs.org
+            docker.com hub.docker.com
+            debian.org security.debian.org
+            ubuntu.com archive.ubuntu.com
+        )
+    fi
 
     local warmed=0 failed=0
     local tmp_dir
@@ -1265,6 +1334,7 @@ show_help() {
     echo -e "  ${YW}--stats${CL}              Afficher les stats Unbound"
     echo -e "  ${YW}--benchmark${CL} [n]      Tester les performances DNS (défaut: ${DEFAULT_BENCHMARK_QUERIES})"
     echo -e "  ${YW}--upstream${CL} <nom>     Forcer l'upstream (${VALID_UPSTREAMS[*]})"
+    echo -e "  ${YW}--auto-upstream${CL}       Sélectionner le plus rapide par benchmark DoT"
     echo -e "  ${YW}--dry-run${CL}            Simuler les actions sans modifier le système"
     echo -e "  ${YW}--allow-proxmox-host${CL} Autoriser l'exécution sur le nœud Proxmox (déconseillé)"
     echo -e "  ${YW}--help${CL}               Afficher cette aide"
@@ -1351,6 +1421,10 @@ main() {
                 SELECTED_UPSTREAM="$2"
                 shift 2
                 ;;
+            --auto-upstream)
+                auto_benchmark_upstream
+                shift
+                ;;
             --benchmark)
                 [[ -z "$command" ]] || { msg_error "Plusieurs commandes détectées"; exit 1; }
                 command="--benchmark"
@@ -1387,7 +1461,9 @@ main() {
         --install)
             INTERACTIVE=false
             header_info
-            STEP_TOTAL=3; STEP_CURRENT=0
+            STEP_TOTAL=4; STEP_CURRENT=0
+            msg_step "Benchmark upstream DNS"
+            auto_benchmark_upstream
             _prefetch_adguard &
             msg_step "Optimisations sysctl"
             apply_sysctl_tuning
