@@ -604,12 +604,12 @@ install_unbound() {
     local UNBOUND_VER
     UNBOUND_VER="$(unbound -V 2>/dev/null | head -1 | sed 's/.*Version //')"
     local _HAS_DO_TCP_KEEPALIVE=false _HAS_FORWARD_NO_AAAA=false
-    if [[ -n "$UNBOUND_VER" ]] && _version_ge "$UNBOUND_VER" "1.19.0"; then
+    if [[ -n "$UNBOUND_VER" ]] && _version_ge "$UNBOUND_VER" "1.19.0" && ! _version_ge "$UNBOUND_VER" "1.21.0"; then
         _HAS_DO_TCP_KEEPALIVE=true
         _HAS_FORWARD_NO_AAAA=true
         msg_ok "Unbound ${UNBOUND_VER} — toutes les fonctionnalités avancées supportées"
     else
-        msg_info "Unbound ${UNBOUND_VER:-?} — fonctionnalités avancées limitées (do-tcp-keepalive désactivé)"
+        msg_info "Unbound ${UNBOUND_VER:-?} — fonctionnalités avancées limitées (do-tcp-keepalive/forward-no-aaaa désactivés)"
     fi
 
     local _TCP_FEATURES
