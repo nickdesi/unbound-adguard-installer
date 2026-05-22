@@ -862,7 +862,7 @@ prewarm_unbound_cache() {
             fi
         ) &
         pids+=("$!")
-        ((i++))
+        i=$((i+1))
         # Batch in groups of 10 to avoid overwhelming
         if (( ${#pids[@]} >= 10 )); then
             wait "${pids[@]}" 2>/dev/null || true
