@@ -1246,10 +1246,20 @@ update_unbound_daemon() {
         msg_info "Mise à jour annulée"; return 0
     }
 
-    msg_info "Installation des dépendances de compilation..."
-    apt-get install -y --no-install-recommends \
-        build-essential libevent-dev libssl-dev libnghttp2-dev \
-        libexpat1-dev bison flex libsystemd-dev 2>&1 | tail -1
+    local build_deps=(build-essential libevent-dev libssl-dev libnghttp2-dev libexpat1-dev bison flex libsystemd-dev)
+    local missing_deps=()
+    for dep in "${build_deps[@]}"; do
+        dpkg-query -W -f='${Status}' "$dep" 2>/dev/null | grep -q 'install ok installed' || missing_deps+=("$dep")
+    done
+    if ((${#missing_deps[@]} > 0)); then
+        msg_info "Installation des dépendances de compilation (${#missing_deps[@]} paquet(s))..."
+        apt-get install -y --no-install-recommends "${missing_deps[@]}" >> "$LOG_FILE" 2>&1 || {
+            msg_error "Échec de l'installation des dépendances"
+            return 1
+        }
+    else
+        msg_ok "Dépendances de compilation déjà installées"
+    fi
 
     local tmp_dir="/tmp/unbound-build"
     rm -rf "$tmp_dir" && mkdir -p "$tmp_dir"
