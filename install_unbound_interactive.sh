@@ -874,9 +874,9 @@ prewarm_unbound_cache() {
     for result in "${tmp_dir}"/*; do
         if [[ -f "$result" ]]; then
             if [[ "$(cat "$result")" == "ok" ]]; then
-                ((warmed++))
+                warmed=$((warmed+1))
             else
-                ((failed++))
+                failed=$((failed+1))
             fi
         fi
     done
