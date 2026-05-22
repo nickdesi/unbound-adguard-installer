@@ -645,6 +645,13 @@ ${anchor_directive}
     serve-original-ttl: yes
     unwanted-reply-threshold: 10000
 
+    # --- TCP & Connexions avancées ---
+    do-tcp-keepalive: yes
+    tcp-idle-timeout: 120
+    edns-tcp-keepalive-timeout: 120
+    val-clean-additional: yes
+    ratelimit: 1000
+
     # --- Sécurité & Vie privée ---
     hide-identity: yes
     hide-version: yes
@@ -662,6 +669,7 @@ ${anchor_directive}
 forward-zone:
     name: "."
     forward-tls-upstream: yes
+    forward-no-aaaa: yes
     ${_UPSTREAM_LINES}
     ${_UPSTREAM_BACKUP}
 
@@ -748,17 +756,42 @@ prewarm_unbound_cache() {
         ubuntu.com archive.ubuntu.com
     )
 
-    local count=0 warmed=0 failed=0
-    for domain in "${domains[@]}"; do
-        if dig @127.0.0.1 -p "${UNBOUND_PORT}" +short "${domain}" &>/dev/null; then
-            warmed=$(( warmed + 1 ))
-        else
-            failed=$(( failed + 1 ))
-        fi
-        count=$(( count + 1 ))
-    done
+    local warmed=0 failed=0
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    local pids=()
+    local i=0 domain
 
-    msg_ok "Cache préchauffé: ${warmed}/${count} domaines résolus (${failed} échecs)"
+    for domain in "${domains[@]}"; do
+        (
+            if dig @127.0.0.1 -p "${UNBOUND_PORT}" +short "${domain}" &>/dev/null; then
+                echo "ok" > "${tmp_dir}/${i}"
+            else
+                echo "fail" > "${tmp_dir}/${i}"
+            fi
+        ) &
+        pids+=("$!")
+        ((i++))
+        # Batch in groups of 10 to avoid overwhelming
+        if (( ${#pids[@]} >= 10 )); then
+            wait "${pids[@]}" 2>/dev/null || true
+            pids=()
+        fi
+    done
+    wait "${pids[@]}" 2>/dev/null || true
+
+    for result in "${tmp_dir}"/*; do
+        if [[ -f "$result" ]]; then
+            if [[ "$(cat "$result")" == "ok" ]]; then
+                ((warmed++))
+            else
+                ((failed++))
+            fi
+        fi
+    done
+    rm -rf "$tmp_dir"
+
+    msg_ok "Cache préchauffé: ${warmed}/${#domains[@]} domaines résolus (${failed} échecs)"
 }
 
 
