@@ -89,6 +89,10 @@ CPU_CORES=1
 RAM_MB=512
 ALLOW_PROXMOX_HOST=false
 
+# --- Version comparison helper ---
+# _version_ge <v1> <v2> → retourne 0 si v1 >= v2 (utilise sort -V)
+_version_ge() { printf '%s\n' "$2" "$1" | sort -V -C; }
+
 # --- Dry-run wrapper ---
 # Usage: run_cmd <cmd> [args...]
 run_cmd() {
@@ -597,6 +601,27 @@ install_unbound() {
         fi
     done
 
+    local UNBOUND_VER
+    UNBOUND_VER="$(unbound -V 2>/dev/null | head -1 | sed 's/.*Version //')"
+    local _HAS_DO_TCP_KEEPALIVE=false _HAS_FORWARD_NO_AAAA=false
+    if [[ -n "$UNBOUND_VER" ]] && _version_ge "$UNBOUND_VER" "1.19.0"; then
+        _HAS_DO_TCP_KEEPALIVE=true
+        _HAS_FORWARD_NO_AAAA=true
+        msg_ok "Unbound ${UNBOUND_VER} — toutes les fonctionnalités avancées supportées"
+    else
+        msg_info "Unbound ${UNBOUND_VER:-?} — fonctionnalités avancées limitées (do-tcp-keepalive désactivé)"
+    fi
+
+    local _TCP_FEATURES
+    if [[ "$_HAS_DO_TCP_KEEPALIVE" == "true" ]]; then
+        _TCP_FEATURES=$'    do-tcp-keepalive: yes\n    tcp-idle-timeout: 120\n    edns-tcp-keepalive-timeout: 120\n    val-clean-additional: yes'
+    else
+        _TCP_FEATURES=$'    tcp-idle-timeout: 120\n    edns-tcp-keepalive-timeout: 120\n    val-clean-additional: yes'
+    fi
+
+    local _FORWARD_NO_AAAA=""
+    [[ "$_HAS_FORWARD_NO_AAAA" == "true" ]] && _FORWARD_NO_AAAA="    forward-no-aaaa: yes"
+
     msg_info "Génération de la configuration Unbound (Threads: $NUM_THREADS, Slabs: $CACHE_SLABS)"
 
     local _UPSTREAM_LINES _UPSTREAM_BACKUP
@@ -686,10 +711,7 @@ ${anchor_directive}
     unwanted-reply-threshold: 10000
 
     # --- TCP & Connexions avancées ---
-    do-tcp-keepalive: yes
-    tcp-idle-timeout: 120
-    edns-tcp-keepalive-timeout: 120
-    val-clean-additional: yes
+${_TCP_FEATURES}
     ratelimit: 1000
 
     # --- Sécurité & Vie privée ---
@@ -709,7 +731,7 @@ ${anchor_directive}
 forward-zone:
     name: "."
     forward-tls-upstream: yes
-    forward-no-aaaa: yes
+${_FORWARD_NO_AAAA}
     ${_UPSTREAM_LINES}
     ${_UPSTREAM_BACKUP}
 
@@ -1194,6 +1216,92 @@ update_script() {
     msg_ok "Mis à jour: v${SCRIPT_VERSION} → v${remote_version:-inconnue}. Relancez le script."
 }
 
+# --- Mise à jour du démon Unbound (compilation depuis les sources) ---
+
+update_unbound_daemon() {
+    [[ "$DRY_RUN" == "true" ]] && { echo "  [DRY-RUN] Mise à jour Unbound simulée"; return 0; }
+
+    local current_ver
+    current_ver="$(unbound -V 2>/dev/null | head -1 | sed 's/.*Version //')"
+
+    msg_info "Vérification de la dernière version Unbound..."
+
+    local latest_ver
+    if ! latest_ver=$(curl -sSf --max-time 10 "https://api.github.com/repos/NLnetLabs/unbound/releases/latest" 2>/dev/null | grep -oP '"tag_name": "\K[^"]+'); then
+        msg_error "Impossible de contacter GitHub API"
+        return 1
+    fi
+    latest_ver="${latest_ver#release-}"
+    [[ -z "$latest_ver" ]] && { msg_error "Format de version inconnu"; return 1; }
+
+    msg_info "Actuelle: ${current_ver:-?} / Dernière: ${latest_ver}"
+
+    if [[ -n "$current_ver" ]] && _version_ge "$current_ver" "$latest_ver"; then
+        msg_ok "Unbound déjà à jour (v${current_ver})"
+        return 0
+    fi
+
+    whiptail --title " Mise à jour Unbound " \
+        --yesno "Version actuelle : ${current_ver:-?}\nNouvelle version : ${latest_ver}\n\nCompilation depuis les sources (~3 min).\n\nContinuer ?" 12 60 || {
+        msg_info "Mise à jour annulée"; return 0
+    }
+
+    msg_info "Installation des dépendances de compilation..."
+    apt-get install -y --no-install-recommends \
+        build-essential libevent-dev libssl-dev libnghttp2-dev \
+        bison flex libsystemd-dev 2>&1 | tail -1
+
+    local tmp_dir="/tmp/unbound-build"
+    rm -rf "$tmp_dir" && mkdir -p "$tmp_dir"
+
+    msg_info "Téléchargement des sources Unbound ${latest_ver}..."
+    if ! curl -sSL --max-time 60 \
+        -o "${tmp_dir}/unbound.tar.gz" \
+        "https://github.com/NLnetLabs/unbound/archive/refs/tags/release-${latest_ver}.tar.gz"; then
+        msg_error "Échec du téléchargement"
+        rm -rf "$tmp_dir"; return 1
+    fi
+
+    tar xzf "${tmp_dir}/unbound.tar.gz" -C "$tmp_dir"
+    local src_dir
+    src_dir=$(find "$tmp_dir" -maxdepth 1 -type d -name 'unbound-*' | head -1)
+    [[ -z "$src_dir" ]] && { msg_error "Sources introuvables"; rm -rf "$tmp_dir"; return 1; }
+
+    cd "$src_dir" || { rm -rf "$tmp_dir"; return 1; }
+
+    msg_info "Configuration et compilation (flags Debian compatibles)..."
+    ./configure \
+        --prefix=/usr --sysconfdir=/etc \
+        --with-libevent --enable-tfo-client --enable-tfo-server \
+        --enable-systemd --with-chroot-dir= \
+        --with-pidfile=/run/unbound.pid \
+        --with-rootkey-file=/usr/share/dns/root.key \
+        --disable-rpath --disable-maintainer-mode &>/dev/null
+
+    make -j"$(nproc)" &>/dev/null || {
+        msg_error "Échec de la compilation"; rm -rf "$tmp_dir"; return 1
+    }
+
+    msg_info "Installation du binaire compilé..."
+    local ub_backup="/usr/sbin/unbound.backup"
+    [[ -f "$ub_backup" ]] && cp "$ub_backup" "${ub_backup}.old"
+    cp /usr/sbin/unbound "$ub_backup"
+    make install &>/dev/null || {
+        msg_error "Échec de l'installation"; rm -rf "$tmp_dir"; return 1
+    }
+    rm -rf "$tmp_dir"
+
+    msg_info "Redémarrage d'Unbound..."
+    restart_service_safely unbound 30 || {
+        msg_error "Restauration de l'ancien binaire..."
+        cp "$ub_backup" /usr/sbin/unbound
+        restart_service_safely unbound 30 || msg_error "Échec de la restauration"
+        return 1
+    }
+
+    msg_ok "Unbound mis à jour: ${current_ver:-?} → ${latest_ver}"
+}
+
 show_menu() {
     local choice
     while true; do
@@ -1220,16 +1328,17 @@ show_menu() {
             --title " AdGuard Home + Unbound  v${SCRIPT_VERSION} " \
             --cancel-button "Quitter" \
             --ok-button "Choisir" \
-            --menu "${status_line}\n\nSelectionnez une action :" 24 76 10 \
+            --menu "${status_line}\n\nSelectionnez une action :" 26 76 11 \
             "1" "  ${label_install}" \
             "2" "  Reparer / Reconfigurer   Unbound + AdGuard upstream" \
             "3" "  Diagnostics              Health check complet + benchmark" \
             "4" "  Statistiques Unbound     Cache, requetes, performances" \
-            "5" "  MAJ Systeme              apt update + upgrade" \
-            "6" "  MAJ Script               Depuis GitHub" \
-            "7" "  Reset mot de passe       AdGuard Home" \
-            "8" "  Desinstaller             Supprimer AdGuard Home + Unbound" \
-            "9" "  Quitter") || exit 0
+            "5" "  MAJ Unbound              Compiler derniere version depuis GitHub" \
+            "6" "  MAJ Systeme              apt update + upgrade" \
+            "7" "  MAJ Script               Depuis GitHub" \
+            "8" "  Reset mot de passe       AdGuard Home" \
+            "9" "  Desinstaller             Supprimer AdGuard Home + Unbound" \
+            "10" " Quitter") || exit 0
 
         case $choice in
                 1)
@@ -1294,27 +1403,30 @@ show_menu() {
                 fi
                 ;;
             5)
+                update_unbound_daemon
+                ;;
+            6)
                 msg_info "Mise à jour du système en cours..."
                 apt-get update -qq && apt-get upgrade -y -qq --no-install-recommends
                 msg_ok "Système à jour"
                 whiptail --title " MAJ systeme " \
                     --msgbox "apt update + upgrade termines avec succes." 8 50
                 ;;
-            6) update_script ;;
-            7)
+            7) update_script ;;
+            8)
                 if reset_adguard_password; then
                     whiptail --title " Reset mot de passe " \
                         --msgbox "Mot de passe AdGuard Home mis a jour.\n\nReconnectez-vous a l'interface web avec le nouveau mot de passe." 10 62
                 fi
                 ;;
-            8)
+            9)
                 if whiptail \
                     --title " Desinstallation " \
                     --yesno "Desinstaller AdGuard Home et Unbound ?\n\nTous les fichiers de configuration seront supprimes.\nCette action est irreversible." 12 60; then
                     uninstall_all
                 fi
                 ;;
-            9) exit 0 ;;
+            10) exit 0 ;;
         esac
     done
 }
@@ -1328,6 +1440,7 @@ show_help() {
     echo -e "  ${YW}--install${CL}            Installation complète (AdGuard Home + Unbound)"
     echo -e "  ${YW}--repair${CL}             Reconfigurer Unbound + AdGuard (sans réinstaller)"
     echo -e "  ${YW}--unbound-only${CL}       Installer/reconfigurer uniquement Unbound"
+    echo -e "  ${YW}--update-unbound${CL}     Compiler la dernière version d'Unbound depuis GitHub"
     echo -e "  ${YW}--update${CL}             Mettre à jour ce script depuis GitHub"
     echo -e "  ${YW}--uninstall${CL}          Désinstaller AdGuard Home et Unbound"
     echo -e "  ${YW}--health${CL}             Exécuter le health check complet"
@@ -1435,7 +1548,7 @@ main() {
                     shift
                 fi
                 ;;
-            --install|--repair|--unbound-only|--health|--stats|--update|--uninstall)
+            --install|--repair|--unbound-only|--health|--stats|--update|--uninstall|--update-unbound)
                 [[ -z "$command" ]] || { msg_error "Plusieurs commandes détectées"; exit 1; }
                 command="$1"
                 shift
@@ -1508,6 +1621,11 @@ main() {
         --update)
             header_info
             update_script
+            ;;
+        --update-unbound)
+            header_info
+            check_root
+            update_unbound_daemon
             ;;
         --uninstall)
             header_info
