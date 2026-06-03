@@ -679,6 +679,15 @@ install_unbound() {
     local UNBOUND_VER
     UNBOUND_VER="$(unbound -V 2>/dev/null | awk 'NR==1{sub(/.*Version /,"");print}')"
 
+    local _ADVANCED_DIRECTIVES=""
+    if [[ -n "$UNBOUND_VER" ]] && _version_ge "$UNBOUND_VER" "1.21.0"; then
+        _ADVANCED_DIRECTIVES=$'\n    # --- Directives avancees (Unbound '"${UNBOUND_VER}"') ---\n    tcp-idle-timeout: 300\n    edns-tcp-keepalive-timeout: 12000\n    val-clean-additional: yes\n    forward-no-aaaa: yes'
+    elif [[ -n "$UNBOUND_VER" ]] && _version_ge "$UNBOUND_VER" "1.19.0"; then
+        _ADVANCED_DIRECTIVES=$'\n    # --- Directives avancees (Unbound '"${UNBOUND_VER}"') ---\n    do-tcp-keepalive: yes\n    tcp-idle-timeout: 300\n    edns-tcp-keepalive-timeout: 12000\n    val-clean-additional: yes\n    forward-no-aaaa: yes'
+    elif [[ -n "$UNBOUND_VER" ]]; then
+        _ADVANCED_DIRECTIVES=$'\n    # --- Directives avancees (Unbound '"${UNBOUND_VER}"') ---\n    tcp-idle-timeout: 300'
+    fi
+
     local _UPSTREAM_LINES _UPSTREAM_BACKUP
     case "$SELECTED_UPSTREAM" in
         cloudflare)
@@ -786,6 +795,7 @@ ${anchor_directive}
     private-address: 172.16.0.0/12
 
     tls-cert-bundle: "/etc/ssl/certs/ca-certificates.crt"
+${_ADVANCED_DIRECTIVES}
 
 forward-zone:
     name: "."
@@ -802,35 +812,6 @@ remote-control:
     control-key-file: "/etc/unbound/unbound_control.key"
     control-cert-file: "/etc/unbound/unbound_control.pem"
 EOF
-        if [[ -n "$UNBOUND_VER" ]] && _version_ge "$UNBOUND_VER" "1.21.0"; then
-            # Unbound 1.21+: do-tcp-keepalive always-on, val-clean-additional + forward-no-aaaa supported
-            cat >> "${UNBOUND_CONF_NEW}.tmp" <<EOF2
-
-    # --- Directives avancees (Unbound ${UNBOUND_VER}) ---
-    tcp-idle-timeout: 300
-    edns-tcp-keepalive-timeout: 12000
-    val-clean-additional: yes
-    forward-no-aaaa: yes
-EOF2
-        elif [[ -n "$UNBOUND_VER" ]] && _version_ge "$UNBOUND_VER" "1.19.0"; then
-            # Unbound 1.19-1.20: all directives including do-tcp-keepalive
-            cat >> "${UNBOUND_CONF_NEW}.tmp" <<EOF2
-
-    # --- Directives avancees (Unbound ${UNBOUND_VER}) ---
-    do-tcp-keepalive: yes
-    tcp-idle-timeout: 300
-    edns-tcp-keepalive-timeout: 12000
-    val-clean-additional: yes
-    forward-no-aaaa: yes
-EOF2
-        else
-            # Unbound < 1.19: minimal directives only
-            cat >> "${UNBOUND_CONF_NEW}.tmp" <<EOF2
-
-    # --- Directives avancees (Unbound ${UNBOUND_VER:-inconnu}) ---
-    tcp-idle-timeout: 300
-EOF2
-        fi
         mv "${UNBOUND_CONF_NEW}.tmp" "$UNBOUND_CONF_NEW"
     fi
 
