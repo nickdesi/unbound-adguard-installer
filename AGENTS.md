@@ -4,7 +4,11 @@
 
 ## Entrypoints & Structure
 
+<<<<<<< HEAD
 - `install_unbound_interactive.sh` (1415 lines, v3.4.2) — main script. Must run as root.
+=======
+- `install_unbound_interactive.sh` — main script (v3.4.2, 1289 lines). Must run as root.
+>>>>>>> 57dfa2c (fix: AGH_YAML readonly variable bug in reset_adguard_password + cleanup .opencode/ from git tracking)
   - Sources `lib/common.sh` (required; fail-fast if missing).
   - Sources `lib/health_checks.sh` (optional; degrades gracefully via `HEALTH_CHECKS_AVAILABLE` flag).
 - `setup.sh` — bootstrap that downloads full repo via `curl`+`tar` and invokes the main script.
@@ -56,40 +60,5 @@ Unbound config: `/etc/unbound/unbound.conf.d/99-adguard-unbound-installer.conf`.
 - **Test `--test` values** map to `test_*` function names via a `case` switch: `validate_ipv4`, `validate_port`, `system_requirements`, `disk_space_check`, `power_of_two`, `power_of_two_edge`, `count_cpuset_cpus`, `performance_profile_boundaries`, `validate_ipv4_edge`, `atomic_write`, `performance_defaults`.
 - **Commits** follow Conventional Commits (`feat:`, `fix:`, `perf:`, `chore:`, `docs:`, `refactor:`, `test:`).
 - **`docs/` directory** is referenced in `CONTRIBUTING.md` but does not exist in the repo.
-
-## Agent Memory (mandatory — fully autonomous, no prompting)
-
-You MUST use agentmemory **proactively** at every stage of a session. Never wait for the user to ask.
-
-### 1. Session start — always recall context
-- Call `memory_recall` avec le sujet de la session pour retrouver le contexte des sessions passées.
-- Call `memory_smart_search` avec les mêmes termes pour croiser les résultats.
-- Si pas de résultats, chercher avec 2-3 termes alternatifs.
-- **Ne jamais démarrer une tâche sans avoir d'abord vérifié la mémoire.**
-
-### 2. After every bug fix — always save a LESSON
-Les leçons sont stockées dans le store dédié `#lessons` (dashboard `http://localhost:3113/#lessons`), avec score de confiance, renforcement et dégradation. Utiliser l'API REST :
-
-```bash
-curl -s -X POST http://localhost:3111/agentmemory/lessons \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "content": "what broke, why, the fix, and the context",
-    "context": "project-specific details",
-    "tags": ["lesson-learned", "bug", ...]
-  }'
-```
-
-Re-poster le même contenu renforce la leçon (augmente `confidence`).
-
-### 3. After every architecture decision or significant refactor — always save a MEMORY
-Utiliser `memory_save` (outil MCP `agentmemory_memory_save`) :
-- `type: "pattern"` ou `"decision"`
-- Inclure : what changed, why, files concernés
-- Tags techniques pertinents
-
-### 4. After every session — verify
-- Call `memory_audit` pour confirmer que tout a bien été sauvegardé.
-- Si un insight a été oublié, le sauvegarder immédiatement.
 
 

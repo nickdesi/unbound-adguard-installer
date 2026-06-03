@@ -1135,12 +1135,12 @@ reset_adguard_password() {
 
     create_backup "$AGH_YAML" || true
 
-    AGH_YAML="$AGH_YAML" AGH_RESET_USER="$username" AGH_RESET_HASH="$password_hash" python3 - <<'PYTHON'
+    AGH_YAML_PATH="$AGH_YAML" AGH_RESET_USER="$username" AGH_RESET_HASH="$password_hash" python3 - <<'PYTHON'
 import os
 import sys
 import yaml
 
-path = os.environ.get("AGH_YAML", "/opt/AdGuardHome/AdGuardHome.yaml")
+path = os.environ.get("AGH_YAML_PATH", "/opt/AdGuardHome/AdGuardHome.yaml")
 username = os.environ["AGH_RESET_USER"]
 password_hash = os.environ["AGH_RESET_HASH"]
 
