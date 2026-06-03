@@ -267,7 +267,8 @@ RAM Available: ${mem_avail} MB
 --- UNBOUND CONFIG ---
 EOF
     
-    if [[ -f /etc/unbound/unbound.conf ]]; then
+    local UNBOUND_CONF_NEW="/etc/unbound/unbound.conf.d/99-adguard-unbound-installer.conf"
+    if [[ -f "$UNBOUND_CONF_NEW" ]]; then
         awk 'BEGIN {
             v["num-threads"]="Threads"; v["msg-cache-slabs"]="Cache Slabs"
             v["rrset-cache-size"]="RRset Cache"; v["msg-cache-size"]="Msg Cache"
@@ -275,7 +276,7 @@ EOF
         }
         /^\s*(num-threads|msg-cache-slabs|rrset-cache-size|msg-cache-size|key-cache-size):/ {
             print v[$1]": "$2
-        }' /etc/unbound/unbound.conf >> "$report_file"
+        }' "$UNBOUND_CONF_NEW" >> "$report_file"
     fi
     
     cat >> "$report_file" <<EOF

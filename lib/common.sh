@@ -101,7 +101,7 @@ download_with_retry() {
     local download_success=false
     
     while (( retry_count < max_retries )); do
-        if wget -q --show-progress -O "$output" "$url" 2>&1; then
+        if curl -fsSL -o "$output" "$url"; then
             # Verify checksum if provided
             if [[ -n "$expected_checksum" ]]; then
                 local actual_checksum
@@ -166,22 +166,8 @@ fetch_json_api() {
 # Usage: validate_ipv4 <ip>
 validate_ipv4() {
     local ip="$1"
-    local ip_regex='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
-    
-    if [[ ! "$ip" =~ $ip_regex ]]; then
-        return 1
-    fi
-    
-    # Check each octet
-    local IFS='.'
-    local -a octets
-    read -r -a octets <<< "$ip"
-    for octet in "${octets[@]}"; do
-        if (( 10#$octet > 255 )); then
-            return 1
-        fi
-    done
-    
+    local ip_regex='^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
+    [[ "$ip" =~ $ip_regex ]] || return 1
     return 0
 }
 
@@ -345,7 +331,13 @@ restart_service_safely() {
         return 1
     fi
     
-    # Wait for service to be active
+    # Wait for service to be active (--wait supported on systemd ≥ 236)
+    if systemctl is-active --wait --timeout="$timeout" "$service" &>/dev/null; then
+        msg_ok "Service $service actif"
+        return 0
+    fi
+
+    # Fallback: manual poll loop
     while (( elapsed < timeout )); do
         if systemctl is-active --quiet "$service"; then
             msg_ok "Service $service actif"
@@ -381,8 +373,7 @@ safe_sed() {
     local file="$1"
     local pattern="$2"
     local replacement="$3"
-    local backup_suffix
-    backup_suffix=".bak.$(date +%s)"
+    local backup_suffix=".bak"
     
     if [[ ! -f "$file" ]]; then
         msg_error "Fichier inexistant: $file"
@@ -390,6 +381,7 @@ safe_sed() {
     fi
     
     if sed -i"${backup_suffix}" --follow-symlinks "s|${pattern}|${replacement}|g" "$file"; then
+        rm -f "${file}${backup_suffix}"
         msg_ok "Modification appliquée: $file"
         return 0
     else

@@ -321,29 +321,28 @@ test_performance_profile_boundaries() {
     local prev_rrset=0 prev_jostle=0 prev_client_timeout=0
     local ram result rrset msg qpt outgoing jostle client_timeout reply_ttl
 
-    for ram in "${rams[@]}"; do
-        result=$(bash -c '
-            source "$1"
-            INTERACTIVE=false
-            CPU_CORES=4
-            RAM_MB="$2"
-            _RESOURCES_CACHED=true
+    local all_results
+    all_results=$(bash -c '
+        source "$1"
+        shift
+        for ram in "$@"; do
+            INTERACTIVE=false; CPU_CORES=4; RAM_MB="$ram"; _RESOURCES_CACHED=true
             calculate_optimized_settings
-            echo "${RRSET_CACHE_SIZE}:${MSG_CACHE_SIZE}:${QUERIES_PER_THREAD}:${OUTGOING_RANGE}:${JOSTLE_TIMEOUT}:${SERVE_EXPIRED_CLIENT_TIMEOUT}:${SERVE_EXPIRED_REPLY_TTL}"
-        ' _ "$script" "$ram" 2>/dev/null)
+            echo "${ram}:${RRSET_CACHE_SIZE}:${MSG_CACHE_SIZE}:${QUERIES_PER_THREAD}:${OUTGOING_RANGE}:${JOSTLE_TIMEOUT}:${SERVE_EXPIRED_CLIENT_TIMEOUT}:${SERVE_EXPIRED_REPLY_TTL}"
+        done
+    ' _ "$script" "${rams[@]}" 2>/dev/null)
 
-        if [[ -z "$result" ]]; then
-            fail "Calcul tuning dynamique impossible pour ${ram}MB"
-            continue
-        fi
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
 
-        rrset=${result%%:*}; result=${result#*:}
-        msg=${result%%:*}; result=${result#*:}
-        qpt=${result%%:*}; result=${result#*:}
-        outgoing=${result%%:*}; result=${result#*:}
-        jostle=${result%%:*}; result=${result#*:}
-        client_timeout=${result%%:*}
-        reply_ttl=${result##*:}
+        ram=${line%%:*}; line=${line#*:}
+        rrset=${line%%:*}; line=${line#*:}
+        msg=${line%%:*}; line=${line#*:}
+        qpt=${line%%:*}; line=${line#*:}
+        outgoing=${line%%:*}; line=${line#*:}
+        jostle=${line%%:*}; line=${line#*:}
+        client_timeout=${line%%:*}
+        reply_ttl=${line##*:}
 
         rrset=${rrset%m}
         msg=${msg%m}
@@ -405,7 +404,7 @@ test_performance_profile_boundaries() {
         prev_rrset=$rrset
         prev_jostle=$jostle
         prev_client_timeout=$client_timeout
-    done
+    done <<< "$all_results"
 }
 
 test_validate_ipv4_edge() {

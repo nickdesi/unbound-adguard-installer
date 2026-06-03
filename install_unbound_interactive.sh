@@ -678,7 +678,7 @@ install_unbound() {
     done
 
     local UNBOUND_VER
-    UNBOUND_VER="$(unbound -V 2>/dev/null | head -1 | sed 's/.*Version //')"
+    UNBOUND_VER="$(unbound -V 2>/dev/null | awk 'NR==1{sub(/.*Version /,"");print}')"
     local _HAS_DO_TCP_KEEPALIVE=false _HAS_FORWARD_NO_AAAA=false
     if [[ -n "$UNBOUND_VER" ]] && _version_ge "$UNBOUND_VER" "1.19.0" && ! _version_ge "$UNBOUND_VER" "1.21.0"; then
         _HAS_DO_TCP_KEEPALIVE=true
@@ -783,7 +783,6 @@ ${anchor_directive}
     serve-expired-reply-ttl: ${SERVE_EXPIRED_REPLY_TTL}
     prefetch: yes
     prefetch-key: yes
-    aggressive-nsec: yes
     serve-original-ttl: yes
     unwanted-reply-threshold: ${UNWANTED_REPLY_THRESHOLD}
 
@@ -954,7 +953,9 @@ prewarm_unbound_cache() {
 
     for result in "${tmp_dir}"/*; do
         if [[ -f "$result" ]]; then
-            if [[ "$(cat "$result")" == "ok" ]]; then
+            local content
+            read -r content < "$result"
+            if [[ "$content" == "ok" ]]; then
                 warmed=$((warmed+1))
             else
                 failed=$((failed+1))
