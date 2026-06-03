@@ -347,8 +347,10 @@ test_performance_profile_boundaries() {
         rrset=${rrset%m}
         msg=${msg%m}
 
-        if (( msg * 2 == rrset )); then
-            pass "${ram}MB: ratio cache rrset/msg optimal (2:1)"
+        local diff=$(( rrset - msg * 2 ))
+        (( diff < 0 )) && diff=$(( -diff ))
+        if (( diff <= 1 )); then
+            pass "${ram}MB: ratio cache rrset/msg optimal (~2:1)"
         else
             fail "${ram}MB: ratio cache invalide rrset=${rrset} msg=${msg}"
         fi

@@ -386,6 +386,7 @@ apply_sysctl_tuning() {
         echo "  [DRY-RUN] Écriture de $SYSCTL_CONF"
         return 0
     fi
+    modprobe tcp_bbr 2>/dev/null || true
     local congestion="bbr"
     if ! sysctl -q net.ipv4.tcp_congestion_control &>/dev/null 2>&1 || \
        ! echo "bbr" | tee /proc/sys/net/ipv4/tcp_congestion_control &>/dev/null 2>&1; then
@@ -409,6 +410,7 @@ net.core.optmem_max = 65536
 net.ipv4.ip_local_port_range = 1024 65535
 net.core.somaxconn = 4096
 net.ipv4.tcp_mem = 65536 131072 262144
+net.ipv4.tcp_mtu_probing = 1
 EOF
     if sysctl -p "$SYSCTL_CONF" &>/dev/null; then
         msg_ok "Optimisations sysctl appliquées"
@@ -523,7 +525,9 @@ calculate_optimized_settings() {
 
     cache_budget_mb=$(( RAM_MB - reserve_mb ))
     (( cache_budget_mb < 96 )) && cache_budget_mb=96
-    (( cache_budget_mb > 3072 )) && cache_budget_mb=3072
+    local max_cache=$(( RAM_MB / 2 ))
+    (( max_cache > 8192 )) && max_cache=8192
+    (( cache_budget_mb > max_cache )) && cache_budget_mb=$max_cache
 
     rrset_mb=$(( (cache_budget_mb * 2) / 3 ))
     (( rrset_mb < 64 )) && rrset_mb=64
@@ -534,9 +538,9 @@ calculate_optimized_settings() {
     (( key_mb < 8 )) && key_mb=8
     (( key_mb > 128 )) && key_mb=128
 
-    neg_mb=$(( msg_mb / 8 ))
-    (( neg_mb < 4 )) && neg_mb=4
-    (( neg_mb > 64 )) && neg_mb=64
+    neg_mb=$(( msg_mb / 4 ))
+    (( neg_mb < 8 )) && neg_mb=8
+    (( neg_mb > 128 )) && neg_mb=128
 
     RRSET_CACHE_SIZE="${rrset_mb}m"
     MSG_CACHE_SIZE="${msg_mb}m"
@@ -569,19 +573,14 @@ calculate_optimized_settings() {
     (( QUERIES_PER_THREAD < 512 )) && QUERIES_PER_THREAD=512
     (( QUERIES_PER_THREAD > 2048 )) && QUERIES_PER_THREAD=2048
 
-    # EDNS buffer: plus grand = moins de truncation, plus petit = moins de fragmentation
-    if (( RAM_MB >= 2048 )); then
-        EDNS_BUFFER=1232
-    else
-        EDNS_BUFFER=512
-    fi
+    EDNS_BUFFER=1232
 
     if (( RAM_MB < 1024 )); then
         CACHE_MIN_TTL=60
         CACHE_MAX_TTL=43200
         SERVE_EXPIRED_TTL=43200
         SERVE_EXPIRED_REPLY_TTL=30
-        SERVE_EXPIRED_CLIENT_TIMEOUT=1200
+        SERVE_EXPIRED_CLIENT_TIMEOUT=1800
     elif (( RAM_MB < 4096 )); then
         CACHE_MIN_TTL=120
         CACHE_MAX_TTL=86400
@@ -679,26 +678,6 @@ install_unbound() {
 
     local UNBOUND_VER
     UNBOUND_VER="$(unbound -V 2>/dev/null | awk 'NR==1{sub(/.*Version /,"");print}')"
-    local _HAS_DO_TCP_KEEPALIVE=false _HAS_FORWARD_NO_AAAA=false
-    if [[ -n "$UNBOUND_VER" ]] && _version_ge "$UNBOUND_VER" "1.19.0" && ! _version_ge "$UNBOUND_VER" "1.21.0"; then
-        _HAS_DO_TCP_KEEPALIVE=true
-        _HAS_FORWARD_NO_AAAA=true
-        msg_ok "Unbound ${UNBOUND_VER} — toutes les fonctionnalités avancées supportées"
-    else
-        msg_info "Unbound ${UNBOUND_VER:-?} — fonctionnalités avancées limitées (do-tcp-keepalive/forward-no-aaaa désactivés)"
-    fi
-
-    local _TCP_FEATURES
-    if [[ "$_HAS_DO_TCP_KEEPALIVE" == "true" ]]; then
-        _TCP_FEATURES=$'    do-tcp-keepalive: yes\n    tcp-idle-timeout: 120\n    edns-tcp-keepalive-timeout: 120\n    val-clean-additional: yes'
-    else
-        _TCP_FEATURES=$'    tcp-idle-timeout: 120\n    edns-tcp-keepalive-timeout: 120\n    val-clean-additional: yes'
-    fi
-
-    local _FORWARD_NO_AAAA=""
-    [[ "$_HAS_FORWARD_NO_AAAA" == "true" ]] && _FORWARD_NO_AAAA="    forward-no-aaaa: yes"
-
-    msg_info "Génération de la configuration Unbound (Threads: $NUM_THREADS, Slabs: $CACHE_SLABS)"
 
     local _UPSTREAM_LINES _UPSTREAM_BACKUP
     case "$SELECTED_UPSTREAM" in
@@ -777,6 +756,7 @@ ${anchor_directive}
     # --- Cache & latence ---
     cache-min-ttl: ${CACHE_MIN_TTL}
     cache-max-ttl: ${CACHE_MAX_TTL}
+    cache-max-negative-ttl: 300
     serve-expired: yes
     serve-expired-ttl: ${SERVE_EXPIRED_TTL}
     serve-expired-client-timeout: ${SERVE_EXPIRED_CLIENT_TIMEOUT}
@@ -789,7 +769,6 @@ ${anchor_directive}
     # --- TCP & Connexions avancées ---
     incoming-num-tcp: ${INCOMING_NUM_TCP}
     outgoing-num-tcp: ${OUTGOING_NUM_TCP}
-${_TCP_FEATURES}
     ratelimit: ${RATELIMIT_VAL}
 
     # --- Sécurité & Vie privée ---
@@ -811,7 +790,6 @@ ${_TCP_FEATURES}
 forward-zone:
     name: "."
     forward-tls-upstream: yes
-${_FORWARD_NO_AAAA}
     ${_UPSTREAM_LINES}
     ${_UPSTREAM_BACKUP}
 
@@ -824,6 +802,35 @@ remote-control:
     control-key-file: "/etc/unbound/unbound_control.key"
     control-cert-file: "/etc/unbound/unbound_control.pem"
 EOF
+        if [[ -n "$UNBOUND_VER" ]] && _version_ge "$UNBOUND_VER" "1.21.0"; then
+            # Unbound 1.21+: do-tcp-keepalive always-on, val-clean-additional + forward-no-aaaa supported
+            cat >> "${UNBOUND_CONF_NEW}.tmp" <<EOF2
+
+    # --- Directives avancees (Unbound ${UNBOUND_VER}) ---
+    tcp-idle-timeout: 300
+    edns-tcp-keepalive-timeout: 12000
+    val-clean-additional: yes
+    forward-no-aaaa: yes
+EOF2
+        elif [[ -n "$UNBOUND_VER" ]] && _version_ge "$UNBOUND_VER" "1.19.0"; then
+            # Unbound 1.19-1.20: all directives including do-tcp-keepalive
+            cat >> "${UNBOUND_CONF_NEW}.tmp" <<EOF2
+
+    # --- Directives avancees (Unbound ${UNBOUND_VER}) ---
+    do-tcp-keepalive: yes
+    tcp-idle-timeout: 300
+    edns-tcp-keepalive-timeout: 12000
+    val-clean-additional: yes
+    forward-no-aaaa: yes
+EOF2
+        else
+            # Unbound < 1.19: minimal directives only
+            cat >> "${UNBOUND_CONF_NEW}.tmp" <<EOF2
+
+    # --- Directives avancees (Unbound ${UNBOUND_VER:-inconnu}) ---
+    tcp-idle-timeout: 300
+EOF2
+        fi
         mv "${UNBOUND_CONF_NEW}.tmp" "$UNBOUND_CONF_NEW"
     fi
 
@@ -895,8 +902,7 @@ prewarm_unbound_cache() {
     if [[ -f "$agh_log" ]] && command -v jq &>/dev/null; then
         local log_domains
         log_domains=$(jq -r 'select(.Q != null) | .Q' "$agh_log" 2>/dev/null | \
-            sed 's/.*@//' | awk -F. '{if(NF>=2) print $(NF-1)"."$NF}' | \
-            sort | uniq -c | sort -rn | head -40 | awk '{print $2}')
+            sed 's/.*@//' | sort | uniq -c | sort -rn | head -40 | awk '{print $2}')
         if [[ -n "$log_domains" ]]; then
             while IFS= read -r d; do
                 domains+=("$d")
@@ -944,7 +950,9 @@ prewarm_unbound_cache() {
         pids+=("$!")
         i=$((i+1))
         # Batch in groups of 10 to avoid overwhelming
-        if (( ${#pids[@]} >= 10 )); then
+        local batch_size=$(( NUM_THREADS * 5 ))
+        (( batch_size < 10 )) && batch_size=10
+        if (( ${#pids[@]} >= batch_size )); then
             wait "${pids[@]}" 2>/dev/null || true
             pids=()
         fi
@@ -999,11 +1007,8 @@ try:
     config.setdefault('dns', {})
     config['dns']['upstream_dns']  = ['127.0.0.1:${UNBOUND_PORT}']
     config['dns']['bootstrap_dns'] = ['1.1.1.1']
-    config['dns']['enable_dnssec'] = True
-    config['dns']['cache_size'] = 0
-    config['dns']['cache_ttl_min'] = max(int(config['dns'].get('cache_ttl_min') or 0), 120)
-    config['dns']['cache_ttl_max'] = max(int(config['dns'].get('cache_ttl_max') or 0), 86400)
-    config['dns']['optimistic_cache'] = True
+    config['dns']['enable_dnssec'] = False  # Unbound already validates DNSSEC
+    config['dns']['cache_size'] = 0  # Unbound handles caching
     config['dns']['disable_ipv6'] = True
     with open("$AGH_YAML", 'w') as f:
         yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
