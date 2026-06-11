@@ -379,13 +379,14 @@ test_performance_profile_boundaries() {
             fail "${ram}MB: jostle-timeout hors bornes (${jostle})"
         fi
 
-        if (( client_timeout >= 1200 && client_timeout <= 2400 )); then
+        if (( client_timeout >= 200 && client_timeout <= 2500 )); then
             pass "${ram}MB: serve-expired-client-timeout borné (${client_timeout})"
         else
             fail "${ram}MB: serve-expired-client-timeout hors bornes (${client_timeout})"
         fi
 
-        if (( reply_ttl == 30 || reply_ttl == 60 || reply_ttl == 120 )); then
+        # Mode agressif: reply_ttl peut être 10 (expérimental), valeur basse
+        if (( reply_ttl >= 10 && reply_ttl <= 120 )); then
             pass "${ram}MB: serve-expired-reply-ttl valide (${reply_ttl})"
         else
             fail "${ram}MB: serve-expired-reply-ttl invalide (${reply_ttl})"

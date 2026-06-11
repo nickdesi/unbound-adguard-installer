@@ -426,5 +426,230 @@ run_full_health_check() {
 }
 
 # ==========================================================================
+# DNS BENCHMARK AVEC DNSPERF (REALISTE)
+# ==========================================================================
+
+# Génère un queryfile pour dnsperf à partir de domaines communs
+# Usage: generate_dnsperf_queryfile <output_path> [num_queries]
+generate_dnsperf_queryfile() {
+    local output="${1:-/tmp/dnsperf_queries.txt}"
+    local num="${2:-10000}"
+    local domains=(
+        "google.com A"
+        "google.com AAAA"
+        "www.google.com A"
+        "cloudflare.com A"
+        "github.com A"
+        "api.github.com A"
+        "facebook.com A"
+        "microsoft.com A"
+        "apple.com A"
+        "amazon.com A"
+        "aws.amazon.com A"
+        "netflix.com A"
+        "youtube.com A"
+        "reddit.com A"
+        "stackoverflow.com A"
+        "wikipedia.org A"
+        "kernel.org A"
+        "python.org A"
+        "docker.com A"
+        "hub.docker.com A"
+        "npmjs.com A"
+        "debian.org A"
+        "ubuntu.com A"
+        "archlinux.org A"
+        "gnu.org A"
+        "gitlab.com A"
+        "bitbucket.org A"
+        "linkedin.com A"
+        "twitter.com A"
+        "x.com A"
+        "zoom.us A"
+        "office.com A"
+        "login.microsoftonline.com A"
+        "icloud.com A"
+        "cdn.sstatic.net A"
+        "1.1.1.1 A"
+        "one.one.one.one A"
+        "dns.google A"
+        "dns.quad9.net A"
+        "unbound.docs.nlnetlabs.nl A"
+        "adguard.com A"
+        "raw.githubusercontent.com A"
+        "pypi.org A"
+        "registry.npmjs.org A"
+        "nginx.org A"
+        "apache.org A"
+        "mysql.com A"
+        "postgresql.org A"
+        "git-scm.com A"
+        "nodejs.org A"
+    )
+    local num_domains=${#domains[@]}
+    local i
+    true > "$output"
+    for ((i=0; i<num; i++)); do
+        echo "${domains[$((i % num_domains))]}" >> "$output"
+    done
+    msg_ok "Queryfile généré: ${num} requêtes, ${num_domains} domaines uniques"
+}
+
+# Installe dnsperf si nécessaire
+# Usage: ensure_dnsperf
+ensure_dnsperf() {
+    if command -v dnsperf &>/dev/null; then
+        return 0
+    fi
+    msg_info "Installation de dnsperf..."
+    apt-get update -qq &>/dev/null || true
+    apt-get install -y -qq --no-install-recommends dnsperf 2>/dev/null && return 0
+    # Fallback: compilation depuis source
+    msg_info "dnsperf non disponible via apt, tentative compilation..."
+    apt-get install -y -qq --no-install-recommends build-essential autoconf automake libtool libssl-dev libldns-dev &>/dev/null || true
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    if git clone --depth 1 https://github.com/DNS-OARC/dnsperf.git "$tmp_dir/dnsperf" 2>/dev/null; then
+        (cd "$tmp_dir/dnsperf" && autoreconf -fi && ./configure --quiet && make -j"$(nproc)" --quiet && make install --quiet) 2>/dev/null || {
+            msg_warn "Échec compilation dnsperf, fallback dig benchmark"
+            rm -rf "$tmp_dir"
+            return 1
+        }
+        rm -rf "$tmp_dir"
+        msg_ok "dnsperf compilé avec succès"
+        return 0
+    fi
+    rm -rf "$tmp_dir"
+    msg_warn "dnsperf indisponible, fallback benchmark basique"
+    return 1
+}
+
+# Benchmark DNS réaliste avec dnsperf
+# Usage: benchmark_dnsperf [num_queries] [output_prefix]
+benchmark_dnsperf() {
+    local num_queries="${1:-10000}"
+    local prefix="${2:-/tmp/dnsperf}"
+    local unbound_port="${UNBOUND_PORT:-5335}"
+    local queryfile="${prefix}_queries.txt"
+    local report="${prefix}_report.txt"
+
+    msg_info "Benchmark DNS réaliste (dnsperf, ${num_queries} requêtes)..."
+    ensure_dnsperf || {
+        benchmark_dns_performance "$(( num_queries / 10 ))"
+        return $?
+    }
+
+    generate_dnsperf_queryfile "$queryfile" "$num_queries"
+
+    if [[ ! -f "$queryfile" || ! -s "$queryfile" ]]; then
+        msg_error "Queryfile invalide"
+        return 1
+    fi
+
+    # Warm-up: 500 requêtes
+    msg_info "Warm-up (500 requêtes)..."
+    dnsperf -s 127.0.0.1 -p "$unbound_port" -d /dev/null -l 3 -q 500 >/dev/null 2>&1 || true
+
+    # Benchmark réel
+    msg_info "Exécution du benchmark..."
+    dnsperf -s 127.0.0.1 -p "$unbound_port" \
+        -d "$queryfile" \
+        -l 30 \
+        -c 10 \
+        -q "$num_queries" \
+        -T 5 \
+        -S 1 \
+        -v 2>&1 | tee "$report" || true
+
+    # Extraction des metrics clés
+    local qps avg_latency p50 p95 p99 lost
+    if [[ -f "$report" ]]; then
+        qps=$(grep -oP 'Queries per second:\s+\K[\d.]+' "$report" || echo "N/A")
+        avg_latency=$(grep -oP 'Average latency:\s+\K[\d.]+' "$report" || echo "N/A")
+        p50=$(grep -oP '50th percentile:\s+\K[\d.]+' "$report" || echo "N/A")
+        p95=$(grep -oP '95th percentile:\s+\K[\d.]+' "$report" || echo "N/A")
+        p99=$(grep -oP '99th percentile:\s+\K[\d.]+' "$report" || echo "N/A")
+        lost=$(grep -oP 'Lost queries:\s+\K[\d.]+' "$report" || echo "N/A")
+        msg_ok "Benchmark dnsperf terminé"
+        echo ""
+        echo "=========================================="
+        echo "  RÉSULTATS BENCHMARK DNS"
+        echo "=========================================="
+        echo "  QPS:           ${qps}"
+        echo "  Latence avg:   ${avg_latency} ms"
+        echo "  P50:           ${p50} ms"
+        echo "  P95:           ${p95} ms"
+        echo "  P99:           ${p99} ms"
+        echo "  Perte:         ${lost}%"
+        echo "=========================================="
+    else
+        msg_warn "Rapport de benchmark non trouvé"
+    fi
+
+    rm -f "$queryfile"
+    echo "Rapport détaillé: $report"
+}
+
+# Benchmark comparatif avant/après tuning
+# Usage: benchmark_comparative <before_label> <after_label>
+benchmark_comparative() {
+    local before_label="${1:-avant}"
+    local after_label="${2:-après}"
+    local tmp_before="/tmp/bench_before.txt"
+    local tmp_after="/tmp/bench_after.txt"
+    local report="/tmp/bench_comparative.txt"
+
+    msg_info "Benchmark comparatif: ${before_label} → ${after_label}"
+
+    benchmark_dnsperf 5000 "${tmp_before%.txt}" 2>&1 | tail -5
+    mv "$report" "$tmp_before" 2>/dev/null || true
+
+    msg_info "Benchmark ${after_label}..."
+    benchmark_dnsperf 5000 "${tmp_after%.txt}" 2>&1 | tail -5
+    mv "$report" "$tmp_after" 2>/dev/null || true
+
+    # Génération rapport comparatif
+    {
+        echo "=================================================="
+        echo "BENCHMARK COMPARATIF DNS"
+        echo "${before_label} → ${after_label}"
+        echo "Date: $(date)"
+        echo "=================================================="
+        echo ""
+        if [[ -f "$tmp_before" && -f "$tmp_after" ]]; then
+            echo "--- ${before_label} ---"
+            grep -E '(Queries per second|Average latency|percentile|Lost)' "$tmp_before"
+            echo ""
+            echo "--- ${after_label} ---"
+            grep -E '(Queries per second|Average latency|percentile|Lost)' "$tmp_after"
+
+            local qps_before qps_after
+            qps_before=$(grep -oP 'Queries per second:\s+\K[\d.]+' "$tmp_before" || echo 0)
+            qps_after=$(grep -oP 'Queries per second:\s+\K[\d.]+' "$tmp_after" || echo 0)
+            local p95_before p95_after
+            p95_before=$(grep -oP '95th percentile:\s+\K[\d.]+' "$tmp_before" || echo 0)
+            p95_after=$(grep -oP '95th percentile:\s+\K[\d.]+' "$tmp_after" || echo 0)
+
+            if (( $(echo "$qps_before > 0" | bc -l 2>/dev/null || echo 0) )); then
+                local qps_gain
+                qps_gain=$(echo "scale=2; (${qps_after} - ${qps_before}) / ${qps_before} * 100" | bc -l 2>/dev/null || echo "N/A")
+                echo ""
+                echo "GAINS:"
+                echo "  QPS:  ${qps_before} → ${qps_after} (${qps_gain}%)"
+                if (( $(echo "$p95_after > 0" | bc -l 2>/dev/null || echo 0) )); then
+                    local p95_gain
+                    p95_gain=$(echo "scale=2; (${p95_before} - ${p95_after}) / ${p95_before} * 100" | bc -l 2>/dev/null || echo "N/A")
+                    echo "  P95:  ${p95_before}ms → ${p95_after}ms (${p95_gain}%)"
+                fi
+            fi
+        fi
+    } > "$report"
+    rm -f "$tmp_before" "$tmp_after"
+
+    msg_ok "Rapport comparatif: $report"
+    cat "$report"
+}
+
+# ==========================================================================
 # END OF HEALTH CHECK LIBRARY
 # ==========================================================================

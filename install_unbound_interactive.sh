@@ -393,29 +393,69 @@ apply_sysctl_tuning() {
         congestion="cubic"
         msg_warn "BBR indisponible, fallback sur cubic"
     fi
+
+    # Taille des buffers par profil RAM
+    get_system_resources
+    local buf_low buf_high backlog
+    if (( RAM_MB >= 4096 )); then
+        buf_low=16777216; buf_high=33554432; backlog=100000
+    elif (( RAM_MB >= 1024 )); then
+        buf_low=8388608; buf_high=16777216; backlog=75000
+    else
+        buf_low=4194304; buf_high=8388608; backlog=50000
+    fi
+
+    # Active fq qdisc pour BBR si dispo (nécessite sch_fq)
+    local qdisc="pfifo_fast"
+    if lsmod 2>/dev/null | grep -q sch_fq || modprobe sch_fq 2>/dev/null; then
+        qdisc="fq"
+    fi
+
     cat > "$SYSCTL_CONF" <<EOF
-# Optimisations DNS (Généré par Installer v${SCRIPT_VERSION})
-net.core.rmem_max = 8388608
-net.core.wmem_max = 8388608
-net.core.rmem_default = 1048576
-net.core.wmem_default = 1048576
-net.core.netdev_max_backlog = 50000
+# Optimisations DNS avancées (Généré par Installer v${SCRIPT_VERSION})
+# Profil RAM: ${RAM_MB}MB
+
+# --- Buffers réseau adaptatifs ---
+net.core.rmem_max = ${buf_high}
+net.core.wmem_max = ${buf_high}
+net.core.rmem_default = ${buf_low}
+net.core.wmem_default = ${buf_low}
+net.core.netdev_max_backlog = ${backlog}
+net.core.optmem_max = 65536
+net.core.somaxconn = 4096
+
+# --- UDP / DNS ---
 net.ipv4.udp_mem = 65536 131072 262144
-net.ipv4.conf.all.accept_redirects = 0
-net.ipv6.conf.all.accept_redirects = 0
+net.ipv4.ip_local_port_range = 1024 65535
+
+# --- TCP tuning avancé ---
 net.ipv4.tcp_congestion_control = ${congestion}
 net.ipv4.tcp_fastopen = 3
 net.ipv4.tcp_slow_start_after_idle = 0
-net.core.optmem_max = 65536
-net.ipv4.ip_local_port_range = 1024 65535
-net.core.somaxconn = 4096
 net.ipv4.tcp_mem = 65536 131072 262144
+# DoT : lower latency en évitant le buffering côté application
+net.ipv4.tcp_notsent_lowat = 131072
+# Path MTU discovery pour éviter fragmentation
 net.ipv4.tcp_mtu_probing = 1
+# SACK désactivé pour les flux DNS courts (réduit CPU overhead)
+net.ipv4.tcp_sack = 0
+# Réduit le temps entre retransmissions DNS
+net.ipv4.tcp_syn_retries = 3
+net.ipv4.tcp_synack_retries = 2
+
+# --- ICMP / Sécurité ---
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv4.icmp_echo_ignore_all = 0
+net.ipv4.conf.all.rp_filter = 1
+
+# --- BBR / FQ cohabitation ---
+# net.core.default_qdisc = ${qdisc}  # décommenter si ${qdisc} dispo
 EOF
     if sysctl -p "$SYSCTL_CONF" &>/dev/null; then
-        msg_ok "Optimisations sysctl appliquées"
+        msg_ok "Optimisations sysctl avancées appliquées (profil ${RAM_MB}MB, qdisc: ${qdisc})"
     else
-        msg_warn "Optimisations sysctl non appliquées (LXC non-privilégié ?)"
+        msg_warn "Optimisations sysctl partiellement appliquées (LXC non-privilégié ?)"
     fi
 }
 
@@ -640,6 +680,143 @@ calculate_optimized_settings() {
     if (( NUM_THREADS == 1 )); then
         SO_REUSEPORT="no"
     fi
+
+    # --- Prefetch & Serve-Stale avancés (expérimental) ---
+    # serve-expired-ttl: temps max pendant lequel Unbound garde une entrée
+    # expirée en cache. Valeurs agressives : 24-48h pour max hit.
+    SERVE_EXPIRED_TTL=$(( 86400 * 2 ))   # 48h (vs 12h/24h/48h avant)
+    # serve-expired-reply-ttl: TTL minimal renvoyé au client pour une
+    # réponse stale. Valeur basse = le client revient vite chercher la
+    # version fraîche.
+    SERVE_EXPIRED_REPLY_TTL=10            # 10s (vs 30/60/120 avant)
+    # serve-expired-client-timeout: temps max d'attente d'une réponse
+    # fraîche avant de servir la stale. Plus bas = latence meilleure
+    # mais plus de stale servie.
+    SERVE_EXPIRED_CLIENT_TIMEOUT=500      # 500ms (vs 1200/1800/2400 avant)
+
+    # prefetch: déclenché dans le dernier 10% du TTL.
+    # prefetch-key: pareil pour les clés DNSSEC.
+    # Pas de prefetch-behavior: active dans Unbound < 1.22 (feature request #1340),
+    # mais on maximise l'effet avec des TTL agressifs.
+    # infra-host-ttl: temps de cache des métriques serveur (RTT, lameness).
+    # Plus bas = failover plus rapide mais plus de requêtes de probing.
+    INFRA_HOST_TTL=300                    # 5min (vs 900/1800 avant)
+    # infra-cache-min-rtt: seuil bas pour retransmit rapide sur forwarders
+    INFRA_CACHE_MIN_RTT=100              # 100ms (vs 50 défaut)
+    # target-fetch-policy: plus agressif pour multi-thread
+    if (( NUM_THREADS <= 1 )); then
+        TARGET_FETCH_POLICY='"2 0 0 0 0 0"'
+    else
+        TARGET_FETCH_POLICY='"3 1 1 0 0 0"'   # plus de bureaux de reso
+    fi
+    # cache-min-ttl: 0 = honore le TTL upstream, idéal pour TTL courts (AWS)
+    # mais augmente la charge upstream. On garde un min bas.
+    CACHE_MIN_TTL=0
+    # cache-max-negative-ttl: on garde les réponses négatives moins longtemps
+    CACHE_MAX_NEGATIVE_TTL=300            # 5min (vs 3600 défaut)
+}
+
+# --- Cache Unbound en tmpfs (expérimental) ---
+# Monte /var/lib/unbound en tmpfs pour éviter I/O disque sur le cache dump.
+# Persiste le dump sur disque au stop, recharge au start via systemd.
+setup_unbound_tmpfs() {
+    local min_ram=1024
+    local tmpfs_size
+    get_system_resources
+    if (( RAM_MB < min_ram )); then
+        msg_info "tmpfs cache désactivé (< ${min_ram}MB RAM)"
+        return 0
+    fi
+    # Taille tmpfs : 10% RAM, entre 16M et 256M
+    tmpfs_size=$(( RAM_MB / 10 ))
+    (( tmpfs_size < 16 )) && tmpfs_size=16
+    (( tmpfs_size > 256 )) && tmpfs_size=256
+
+    msg_info "Configuration tmpfs pour /var/lib/unbound (${tmpfs_size}M)..."
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "  [DRY-RUN] mount -t tmpfs -o size=${tmpfs_size}M tmpfs /var/lib/unbound"
+        return 0
+    fi
+
+    # Sauvegarde le dump existant si présent
+    local dump_file="/var/lib/unbound/cache.dump"
+    local dump_backup="/var/lib/unbound/cache.dump.persist"
+    if [[ -f "$dump_file" ]]; then
+        cp -a "$dump_file" "$dump_backup" 2>/dev/null || true
+    fi
+
+    # Montage tmpfs
+    if ! mountpoint -q /var/lib/unbound 2>/dev/null; then
+        if mount -t tmpfs -o "size=${tmpfs_size}M,noatime,nodiratime,mode=755,uid=unbound,gid=unbound" tmpfs /var/lib/unbound 2>/dev/null; then
+            msg_ok "tmpfs monté sur /var/lib/unbound (${tmpfs_size}M)"
+        else
+            msg_warn "Impossible de monter tmpfs (LXC non-privilégié ?) — fallback disque"
+            return 0
+        fi
+    else
+        msg_ok "tmpfs déjà actif sur /var/lib/unbound"
+    fi
+
+    # Restaure le dump persisté
+    if [[ -f "$dump_backup" ]]; then
+        cp -a "$dump_backup" "$dump_file" 2>/dev/null || true
+    fi
+
+    # Ajoute l'entrée fstab pour persistance au reboot
+    local fstab_entry="tmpfs  /var/lib/unbound  tmpfs  defaults,size=${tmpfs_size}M,noatime,nodiratime,mode=755,uid=unbound,gid=unbound  0  0"
+    if ! grep -qs "/var/lib/unbound" /etc/fstab; then
+        echo "$fstab_entry" >> /etc/fstab
+        msg_ok "Entrée fstab ajoutée pour /var/lib/unbound"
+    fi
+
+    # Renforce la persistance systemd : dump → disque avant arrêt
+    mkdir -p /etc/systemd/system/unbound.service.d
+    cat > /etc/systemd/system/unbound.service.d/cache-persist.conf <<'CACHEEOF'
+[Service]
+# Charge le cache depuis le dump disque persistant (hors tmpfs)
+ExecStartPre=-/bin/sh -c 'if [ -f /var/lib/unbound/cache.dump.persist ]; then /usr/sbin/unbound-control -s 127.0.0.1@8953 load_cache < /var/lib/unbound/cache.dump.persist 2>/dev/null; elif [ -f /var/lib/unbound/cache.dump ]; then /usr/sbin/unbound-control -s 127.0.0.1@8953 load_cache < /var/lib/unbound/cache.dump 2>/dev/null; fi || true'
+# Dump le cache vers tmpfs, puis copie vers disque pour persistance
+ExecStop=-/bin/sh -c '/usr/sbin/unbound-control -s 127.0.0.1@8953 dump_cache > /var/lib/unbound/cache.dump 2>/dev/null; cp /var/lib/unbound/cache.dump /var/lib/unbound/cache.dump.persist 2>/dev/null || true'
+# Sur stop forcé, tente aussi la copie disque
+ExecStopPost=-/bin/sh -c '[ -f /var/lib/unbound/cache.dump ] && cp /var/lib/unbound/cache.dump /var/lib/unbound/cache.dump.persist 2>/dev/null || true'
+CACHEEOF
+    systemctl daemon-reload &>/dev/null
+    msg_ok "Persistance cache: dump → /var/lib/unbound/cache.dump.persist"
+}
+
+# --- CPU Affinity & Systemd Tuning pour Unbound ---
+# Dans un LXC multi-cœur, on épingle les threads Unbound aux CPU
+# pour éviter les migrations de cache entre cœurs (cache miss).
+setup_unbound_systemd_tuning() {
+    get_system_resources
+    if (( CPU_CORES < 2 )); then
+        msg_info "CPU affinity désactivé (< 2 cœurs)"
+        return 0
+    fi
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "  [DRY-RUN] CPUAffinity=0-$((CPU_CORES-1)) + IOWeight=500 + OOMScoreAdjust=-500"
+        return 0
+    fi
+
+    mkdir -p /etc/systemd/system/unbound.service.d
+    cat > /etc/systemd/system/unbound.service.d/cpu-affinity.conf <<'CPUFEOF'
+[Service]
+# Épingle Unbound aux CPU disponibles (évite migrations cache)
+CPUAffinity=CPURANGE
+# Priorité IO élevée pour les accès cache disque (tmpfs)
+IOWeight=500
+# Protège Unbound du OOM killer
+OOMScoreAdjust=-500
+# CPU scheduling: idle poll évite les wakeups inutiles
+CPUSchedulingPolicy=idle
+# Nice élevé = basse priorité CPU (bon citoyen dans le LXC)
+Nice=5
+CPUFEOF
+    # Remplace le placeholder par la valeur réelle
+    local cpu_range="0-$((CPU_CORES-1))"
+    sed -i "s/CPURANGE/$cpu_range/" /etc/systemd/system/unbound.service.d/cpu-affinity.conf
+    systemctl daemon-reload &>/dev/null
+    msg_ok "CPU affinity: ${cpu_range}, IOWeight=500, OOMScoreAdjust=-500"
 }
 
 install_unbound() {
@@ -847,14 +1024,10 @@ EOF
     if [[ "$checkconf_ok" == "true" ]]; then
         systemctl enable unbound &>/dev/null
 
-        # Cache persistence: dump on stop, load on start
-        mkdir -p /etc/systemd/system/unbound.service.d
-        cat > /etc/systemd/system/unbound.service.d/cache-persist.conf <<'CACHEEOF'
-[Service]
-ExecStartPre=-/bin/sh -c '/usr/sbin/unbound-control -s 127.0.0.1@8953 load_cache < /var/lib/unbound/cache.dump 2>/dev/null || true'
-ExecStop=-/bin/sh -c '/usr/sbin/unbound-control -s 127.0.0.1@8953 dump_cache > /var/lib/unbound/cache.dump 2>/dev/null || true'
-CACHEEOF
-        systemctl daemon-reload &>/dev/null
+        # Montage tmpfs pour cache Unbound (si RAM suffisante)
+        setup_unbound_tmpfs
+        # CPU affinity + systemd tuning (si multi-cœur)
+        setup_unbound_systemd_tuning
 
         restart_service_safely unbound 30 || { msg_error "Échec redémarrage sécurisé Unbound"; exit 1; }
         msg_ok "Configuration Unbound valide et service redémarré"
@@ -1348,7 +1521,8 @@ show_menu() {
             "8" "  Reset mot de passe       AdGuard Home" \
             "9" "  Desinstaller             Supprimer AdGuard Home + Unbound" \
             "10" "  Auto-Upstream            Benchmark DoT + selection auto" \
-            "11" " Quitter") || exit 0
+            "11" "  Benchmark DNS (dnsperf)  Benchmark réaliste avec dnsperf" \
+            "12" " Quitter") || exit 0
 
         case $choice in
                 1)
@@ -1444,7 +1618,20 @@ show_menu() {
                 whiptail --title " Auto-Upstream " \
                     --msgbox "Upstream selectionne: ${SELECTED_UPSTREAM}\n\nUnbound et AdGuard Home reconfigures automatiquement." 10 58
                 ;;
-            11) exit 0 ;;
+             11)
+                if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]] && type benchmark_dnsperf &>/dev/null; then
+                    local bench_file
+                    benchmark_dnsperf 10000 > /tmp/bench_raw.txt 2>&1 || true
+                    sanitize_textbox_output < /tmp/bench_raw.txt > /tmp/bench_clean.txt 2>/dev/null
+                    whiptail --title " Benchmark DNS (dnsperf) " --scrolltext --textbox /tmp/bench_clean.txt 26 92 2>/dev/null || \
+                        cat /tmp/bench_raw.txt
+                    rm -f /tmp/bench_raw.txt /tmp/bench_clean.txt
+                else
+                    whiptail --title " Module manquant " \
+                        --msgbox "lib/health_checks.sh ou dnsperf non disponible.\nAssurez-vous de cloner le dépôt complet." 9 58
+                fi
+                ;;
+             12) exit 0 ;;
         esac
     done
 }
@@ -1464,6 +1651,7 @@ show_help() {
     echo -e "  ${YW}--health${CL}             Exécuter le health check complet"
     echo -e "  ${YW}--stats${CL}              Afficher les stats Unbound"
     echo -e "  ${YW}--benchmark${CL} [n]      Tester les performances DNS (défaut: ${DEFAULT_BENCHMARK_QUERIES})"
+    echo -e "  ${YW}--benchmark-dnsperf${CL}   Benchmark réaliste avec dnsperf (10k requêtes)"
     echo -e "  ${YW}--upstream${CL} <nom>     Forcer l'upstream (${VALID_UPSTREAMS[*]})"
     echo -e "  ${YW}--auto-upstream${CL}       Sélectionner le plus rapide par benchmark DoT"
     echo -e "  ${YW}--dry-run${CL}            Simuler les actions sans modifier le système"
@@ -1566,6 +1754,11 @@ main() {
                     shift
                 fi
                 ;;
+            --benchmark-dnsperf)
+                [[ -z "$command" ]] || { msg_error "Plusieurs commandes détectées"; exit 1; }
+                command="--benchmark-dnsperf"
+                shift
+                ;;
             --install|--repair|--unbound-only|--health|--stats|--update|--uninstall|--update-unbound)
                 [[ -z "$command" ]] || { msg_error "Plusieurs commandes détectées"; exit 1; }
                 command="$1"
@@ -1633,6 +1826,15 @@ main() {
                 benchmark_dns_performance "$benchmark_queries"
             else
                 msg_error "Benchmark indisponible (lib/health_checks.sh manquant)"
+                exit 1
+            fi
+            ;;
+        --benchmark-dnsperf)
+            header_info
+            if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]] && type benchmark_dnsperf &>/dev/null; then
+                benchmark_dnsperf 10000
+            else
+                msg_error "Benchmark dnsperf indisponible (lib/health_checks.sh manquant)"
                 exit 1
             fi
             ;;
