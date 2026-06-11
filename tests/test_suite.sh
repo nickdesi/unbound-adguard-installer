@@ -379,7 +379,7 @@ test_performance_profile_boundaries() {
             fail "${ram}MB: jostle-timeout hors bornes (${jostle})"
         fi
 
-        if (( client_timeout >= 200 && client_timeout <= 2500 )); then
+        if (( client_timeout == 0 || (client_timeout >= 200 && client_timeout <= 2500) )); then
             pass "${ram}MB: serve-expired-client-timeout borné (${client_timeout})"
         else
             fail "${ram}MB: serve-expired-client-timeout hors bornes (${client_timeout})"

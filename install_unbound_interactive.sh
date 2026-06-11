@@ -692,7 +692,7 @@ calculate_optimized_settings() {
     # serve-expired-client-timeout: temps max d'attente d'une réponse
     # fraîche avant de servir la stale. Plus bas = latence meilleure
     # mais plus de stale servie.
-    SERVE_EXPIRED_CLIENT_TIMEOUT=500      # 500ms (vs 1200/1800/2400 avant)
+    SERVE_EXPIRED_CLIENT_TIMEOUT=0        # 0ms - return stale immediately, resolve in background
 
     # prefetch: déclenché dans le dernier 10% du TTL.
     # prefetch-key: pareil pour les clés DNSSEC.
@@ -782,6 +782,21 @@ ExecStopPost=-/bin/sh -c '[ -f /var/lib/unbound/cache.dump ] && cp /var/lib/unbo
 CACHEEOF
     systemctl daemon-reload &>/dev/null
     msg_ok "Persistance cache: dump → /var/lib/unbound/cache.dump.persist"
+
+    # Crée la tâche cron pour sauvegarder le cache sur le disque persistant toutes les heures
+    local cron_script="/etc/cron.hourly/unbound-cache-persist"
+    local cron_content
+    cron_content=$(cat <<'CRONEOF'
+#!/bin/sh
+# Sauvegarde périodique du cache Unbound (unbound-adguard-installer)
+if systemctl is-active --quiet unbound && command -v unbound-control >/dev/null; then
+    /usr/sbin/unbound-control -s 127.0.0.1@8953 dump_cache > /var/lib/unbound/cache.dump 2>/dev/null && \
+    cp /var/lib/unbound/cache.dump /var/lib/unbound/cache.dump.persist 2>/dev/null
+fi
+CRONEOF
+)
+    atomic_write "$cron_script" "$cron_content"
+    chmod +x "$cron_script"
 }
 
 # --- CPU Affinity & Systemd Tuning pour Unbound ---
@@ -1164,6 +1179,17 @@ try:
     config['dns']['enable_dnssec'] = False  # Unbound already validates DNSSEC
     config['dns']['cache_size'] = 0  # Unbound handles caching
     config['dns']['disable_ipv6'] = True
+    config['dns']['ratelimit'] = 0  # Disable rate-limiting for local performance
+
+    config.setdefault('querylog', {})
+    config['querylog']['enabled'] = True
+    config['querylog']['file_enabled'] = True
+    config['querylog']['interval'] = '168h'  # 7 days retention for performance
+
+    config.setdefault('statistics', {})
+    config['statistics']['enabled'] = True
+    config['statistics']['interval'] = '168h'  # 7 days retention for performance
+
     with open("$AGH_YAML", 'w') as f:
         yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
     print('OK')
@@ -1351,7 +1377,14 @@ uninstall_all() {
     systemctl stop unbound &>/dev/null || true
     apt-get remove --purge -y unbound &>/dev/null
     rm -rf /etc/unbound
+    rm -rf /etc/systemd/system/unbound.service.d
+    rm -f /etc/cron.hourly/unbound-cache-persist
     msg_ok "Unbound supprimé"
+
+    msg_info "Nettoyage des optimisations système..."
+    rm -f /etc/sysctl.d/99-dns-optimization.conf
+    sysctl --system &>/dev/null || true
+    msg_ok "Optimisations système supprimées"
 
     msg_ok "Désinstallation terminée"
 }
