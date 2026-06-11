@@ -36,6 +36,10 @@ sudo ./install_unbound_interactive.sh --upstream quad9 --install
 
 # Lint (CI runs this exact command)
 shellcheck install_unbound_interactive.sh lib/common.sh lib/health_checks.sh tests/test_suite.sh setup.sh
+
+# Graphify (Knowledge Graph)
+rtk graphify update .                           # Rebuild code graph (AST-only, no cost)
+rtk graphify query "How does Unbound config work?" # Query code graph
 ```
 
 ## Architecture
@@ -45,6 +49,13 @@ Clients → AdGuard Home (:53, web :3000) → 127.0.0.1:5335 → Unbound (cache 
 ```
 
 Unbound config: `/etc/unbound/unbound.conf.d/99-adguard-unbound-installer.conf`. Logs: `/var/log/adguard-unbound-installer.log`. Tuning adapts to detected CPU/RAM.
+
+## Graphify Integration
+
+This repository contains a **Graphify** knowledge graph at `graphify-out/`.
+- **Querying**: For any questions regarding codebase architecture or relationships, use `rtk graphify query "<question>"`.
+- **Explaining**: To explain a specific concept, class, or function, use `rtk graphify explain "<concept>"`.
+- **Updating**: **CRITICAL** — Always run `rtk graphify update .` after modifying code files to keep the graph and `GRAPH_REPORT.md` synchronized and current (AST-only, no LLM cost).
 
 ## Gotchas
 
