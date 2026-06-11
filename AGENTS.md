@@ -4,11 +4,7 @@
 
 ## Entrypoints & Structure
 
-<<<<<<< HEAD
-- `install_unbound_interactive.sh` (1415 lines, v3.4.2) — main script. Must run as root.
-=======
-- `install_unbound_interactive.sh` — main script (v3.4.2, 1289 lines). Must run as root.
->>>>>>> 57dfa2c (fix: AGH_YAML readonly variable bug in reset_adguard_password + cleanup .opencode/ from git tracking)
+- `install_unbound_interactive.sh` (1862 lines, v3.5.0) — main script. Must run as root.
   - Sources `lib/common.sh` (required; fail-fast if missing).
   - Sources `lib/health_checks.sh` (optional; degrades gracefully via `HEALTH_CHECKS_AVAILABLE` flag).
 - `setup.sh` — bootstrap that downloads full repo via `curl`+`tar` and invokes the main script.
