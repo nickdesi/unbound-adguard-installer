@@ -1,0 +1,33 @@
+name: AI Pull Request Reviewer
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  review:
+    # Optionnel: pour limiter la revue aux PR créées par un utilisateur spécifique (ex: Jules)
+    # Remplacer 'jules-username' par l'identifiant GitHub de Jules
+    # if: github.event.pull_request.user.login == 'jules-username'
+    
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Run AI Reviewer
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node .github/scripts/ai-pr-reviewer.js
