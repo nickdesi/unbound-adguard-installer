@@ -914,9 +914,10 @@ EOF
 server:
     verbosity: 0
     interface: 127.0.0.1
+    interface: ::1
     port: ${UNBOUND_PORT}
     do-ip4: yes
-    do-ip6: no
+    do-ip6: yes
     do-udp: yes
     do-tcp: yes
     chroot: ""
@@ -976,7 +977,7 @@ ${anchor_directive}
     aggressive-nsec: ${AGGRESSIVE_NSEC}
     hide-identity: yes
     hide-version: yes
-    deny-any: yes
+    refuse-any: yes
     harden-glue: yes
     harden-dnssec-stripped: yes
     harden-algo-downgrade: yes
@@ -992,6 +993,7 @@ ${_ADVANCED_DIRECTIVES}
 forward-zone:
     name: "."
     forward-tls-upstream: yes
+    forward-tcp-upstream: yes
     ${_UPSTREAM_LINES}
     ${_UPSTREAM_BACKUP}
 
@@ -1021,7 +1023,7 @@ EOF
 
     [[ -s "$UNBOUND_TRUST_ANCHOR" ]] || repair_unbound_trust_anchor || true
     chown -R unbound:unbound /etc/unbound /var/lib/unbound
-    chmod 755 /etc/unbound /etc/unbound/unbound.conf.d /var/lib/unbound
+    chmod 750 /etc/unbound /etc/unbound/unbound.conf.d /var/lib/unbound
     chmod 640 /etc/unbound/unbound_control.* 2>/dev/null || true
     chmod 644 "$ROOT_HINTS_FILE" 2>/dev/null || true
 
