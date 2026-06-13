@@ -69,7 +69,8 @@ async function run() {
     console.log(`Tentative de fusion de origin/${BASE_BRANCH}...`);
     try {
       runCmd(`git merge origin/${BASE_BRANCH} --no-edit`);
-      console.log("✅ Fusion réussie sans conflit.");
+      console.log("✅ Fusion réussie sans conflit. Poussée de la mise à jour...");
+      runCmd(`git push origin HEAD:${HEAD_BRANCH}`);
       process.exit(0);
     } catch (mergeError) {
       console.log("⚠️ Conflits détectés lors de la fusion. Analyse de .jules/bolt.md...");
