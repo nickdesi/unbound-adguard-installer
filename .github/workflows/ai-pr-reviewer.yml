@@ -3,6 +3,9 @@ name: AI Pull Request Reviewer
 on:
   pull_request:
     types: [opened, synchronize]
+    paths-ignore:
+      - '.jules/**'
+      - '**.md'
   workflow_dispatch:
     inputs:
       pr_number:

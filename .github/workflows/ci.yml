@@ -3,8 +3,14 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - \'.jules/**\'
+      - \'**.md\'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - \'.jules/**\'
+      - \'**.md\'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
