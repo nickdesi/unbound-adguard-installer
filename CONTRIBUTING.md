@@ -78,7 +78,7 @@ trap 'error_handler $? $LINENO $BASH_COMMAND' ERR
 nom_fonction() {
     local param1="$1"
     local param2="${2:-default_value}"
-    
+
     # Logique de la fonction
 }
 ```
@@ -120,7 +120,7 @@ done
 test_votre_fonction() {
     local result
     result=$(votre_fonction "param")
-    
+
     if [[ "$result" == "expected" ]]; then
         pass "Test votre_fonction"
     else

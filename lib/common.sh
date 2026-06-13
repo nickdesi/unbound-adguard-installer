@@ -99,7 +99,7 @@ download_with_retry() {
     local expected_checksum="${4:-}"
     local retry_count=0
     local download_success=false
-    
+
     while (( retry_count < max_retries )); do
         if curl -fsSL -o "$output" "$url"; then
             # Verify checksum if provided
@@ -118,19 +118,19 @@ download_with_retry() {
                 break
             fi
         fi
-        
+
         ((++retry_count))
         if (( retry_count < max_retries )); then
             msg_warn "Échec téléchargement, nouvelle tentative dans 3s... ($retry_count/$max_retries)"
             sleep 3
         fi
     done
-    
+
     if [[ "$download_success" != "true" ]]; then
         msg_error "Échec téléchargement après $max_retries tentatives: $url"
         return 1
     fi
-    
+
     return 0
 }
 
@@ -141,19 +141,19 @@ fetch_json_api() {
     local max_retries="${2:-3}"
     local retry_count=0
     local result=""
-    
+
     while (( retry_count < max_retries )); do
         if result=$(curl -fsSL "$url" 2>/dev/null); then
             echo "$result"
             return 0
         fi
-        
+
         ((++retry_count))
         if (( retry_count < max_retries )); then
             sleep 2
         fi
     done
-    
+
     msg_error "Échec récupération API après $max_retries tentatives: $url"
     return 1
 }
@@ -207,15 +207,15 @@ count_cpuset_cpus() {
 # Usage: validate_port <port>
 validate_port() {
     local port="$1"
-    
+
     if [[ ! "$port" =~ ^[0-9]+$ ]]; then
         return 1
     fi
-    
+
     if (( port < 1 || port > 65535 )); then
         return 1
     fi
-    
+
     return 0
 }
 
@@ -223,16 +223,16 @@ validate_port() {
 # Usage: is_port_available <port>
 is_port_available() {
     local port="$1"
-    
+
     if ! validate_port "$port"; then
         msg_error "Port invalide: $port"
         return 1
     fi
-    
+
     if ss -tulnp | grep -q ":${port}\s"; then
         return 1
     fi
-    
+
     return 0
 }
 
@@ -252,14 +252,14 @@ check_disk_space() {
     local path="$1"
     local min_mb="$2"
     local available_mb
-    
+
     available_mb=$(df -BM "$path" | awk 'NR==2 {gsub(/M/,"",$4); print $4}')
-    
+
     if (( available_mb < min_mb )); then
         msg_error "Espace disque insuffisant sur $path: ${available_mb}MB disponible, ${min_mb}MB requis"
         return 1
     fi
-    
+
     return 0
 }
 
@@ -274,12 +274,12 @@ create_backup() {
     local timestamp
     timestamp=$(date +%Y%m%d_%H%M%S)
     local backup_path="${path}.backup_${timestamp}"
-    
+
     if [[ ! -e "$path" ]]; then
         msg_warn "Chemin inexistant, pas de backup: $path"
         return 0
     fi
-    
+
     if cp -r "$path" "$backup_path" 2>/dev/null; then
         msg_ok "Backup créé: $backup_path"
         echo "$backup_path"
@@ -295,15 +295,15 @@ create_backup() {
 restore_backup() {
     local backup_path="$1"
     local original_path="$2"
-    
+
     if [[ ! -e "$backup_path" ]]; then
         msg_error "Backup introuvable: $backup_path"
         return 1
     fi
-    
+
     # Remove current version if exists
     rm -rf "$original_path"
-    
+
     if mv "$backup_path" "$original_path"; then
         msg_ok "Restauration réussie: $original_path"
         return 0
@@ -323,14 +323,14 @@ restart_service_safely() {
     local service="$1"
     local timeout="${2:-30}"
     local elapsed=0
-    
+
     msg_info "Redémarrage de $service..."
-    
+
     if ! systemctl restart "$service"; then
         msg_error "Échec du redémarrage de $service"
         return 1
     fi
-    
+
     # Wait for service to be active (--wait supported on systemd ≥ 236)
     if systemctl is-active --wait --timeout="$timeout" "$service" &>/dev/null; then
         msg_ok "Service $service actif"
@@ -346,7 +346,7 @@ restart_service_safely() {
         sleep 1
         ((++elapsed))
     done
-    
+
     msg_error "Timeout: $service n'est pas devenu actif après ${timeout}s"
     systemctl status "$service" --no-pager
     return 1
@@ -374,12 +374,12 @@ safe_sed() {
     local pattern="$2"
     local replacement="$3"
     local backup_suffix=".bak"
-    
+
     if [[ ! -f "$file" ]]; then
         msg_error "Fichier inexistant: $file"
         return 1
     fi
-    
+
     if sed -i"${backup_suffix}" --follow-symlinks "s|${pattern}|${replacement}|g" "$file"; then
         rm -f "${file}${backup_suffix}"
         msg_ok "Modification appliquée: $file"
@@ -413,13 +413,13 @@ log_trace() {
 require_command() {
     local cmd="$1"
     local pkg="${2:-$1}"
-    
+
     if ! command -v "$cmd" &>/dev/null; then
         msg_error "Commande requise non trouvée: $cmd"
         msg_info "Installation recommandée: apt-get install -y $pkg"
         return 1
     fi
-    
+
     return 0
 }
 
@@ -428,12 +428,12 @@ require_command() {
 check_min_version() {
     local current="$1"
     local minimum="$2"
-    
+
     if [[ "$(printf '%s\n' "$minimum" "$current" | sort -V | head -n1)" != "$minimum" ]]; then
         msg_error "Version insuffisante: $current < $minimum"
         return 1
     fi
-    
+
     return 0
 }
 

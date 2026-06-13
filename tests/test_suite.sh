@@ -54,7 +54,7 @@ assert_equals() {
     local expected="$1"
     local actual="$2"
     local message="${3:-Assertion failed}"
-    
+
     if [[ "$expected" == "$actual" ]]; then
         pass "$message"
     else
@@ -65,7 +65,7 @@ assert_equals() {
 assert_true() {
     local condition="$1"
     local message="${2:-Assertion failed}"
-    
+
     if [[ "$condition" == "true" || "$condition" == "0" ]]; then
         pass "$message"
     else
@@ -76,7 +76,7 @@ assert_true() {
 assert_command_exists() {
     local command="$1"
     local message="${2:-Command $command should exist}"
-    
+
     if command -v "$command" &>/dev/null; then
         pass "$message"
     else
@@ -91,35 +91,35 @@ assert_command_exists() {
 test_validate_ipv4() {
     echo ""
     echo "=== Testing IPv4 Validation ==="
-    
+
     # Uses validate_ipv4 from lib/common.sh
-    
+
     # Valid IPs
     if validate_ipv4 "192.168.1.1" 2>/dev/null; then
         pass "Valid IP: 192.168.1.1"
     else
         fail "Valid IP: 192.168.1.1"
     fi
-    
+
     if validate_ipv4 "10.0.0.1" 2>/dev/null; then
         pass "Valid IP: 10.0.0.1"
     else
         fail "Valid IP: 10.0.0.1"
     fi
-    
+
     # Invalid IPs
     if ! validate_ipv4 "256.1.1.1" 2>/dev/null; then
         pass "Invalid IP: 256.1.1.1 (octet > 255)"
     else
         fail "Invalid IP: 256.1.1.1 should be rejected"
     fi
-    
+
     if ! validate_ipv4 "192.168.1" 2>/dev/null; then
         pass "Invalid IP: 192.168.1 (incomplete)"
     else
         fail "Invalid IP: 192.168.1 should be rejected"
     fi
-    
+
     if ! validate_ipv4 "abc.def.ghi.jkl" 2>/dev/null; then
         pass "Invalid IP: abc.def.ghi.jkl (non-numeric)"
     else
@@ -130,41 +130,41 @@ test_validate_ipv4() {
 test_validate_port() {
     echo ""
     echo "=== Testing Port Validation ==="
-    
+
     # Uses validate_port from lib/common.sh
-    
+
     # Valid ports
     if validate_port "80"; then
         pass "Valid port: 80"
     else
         fail "Valid port: 80"
     fi
-    
+
     if validate_port "53"; then
         pass "Valid port: 53"
     else
         fail "Valid port: 53"
     fi
-    
+
     if validate_port "65535"; then
         pass "Valid port: 65535 (max)"
     else
         fail "Valid port: 65535"
     fi
-    
+
     # Invalid ports
     if ! validate_port "0"; then
         pass "Invalid port: 0 (too low)"
     else
         fail "Invalid port: 0 should be rejected"
     fi
-    
+
     if ! validate_port "65536"; then
         pass "Invalid port: 65536 (too high)"
     else
         fail "Invalid port: 65536 should be rejected"
     fi
-    
+
     if ! validate_port "abc"; then
         pass "Invalid port: abc (non-numeric)"
     else
@@ -179,19 +179,19 @@ test_validate_port() {
 test_system_requirements() {
     echo ""
     echo "=== Testing System Requirements ==="
-    
+
     # Check if running on Linux
     if [[ "$(uname -s)" == "Linux" ]]; then
         pass "Running on Linux"
     else
         skip "Not running on Linux (tests may be limited)"
     fi
-    
+
     # Check required commands
     for cmd in bash awk sed grep; do
         assert_command_exists "$cmd" "Command exists: $cmd"
     done
-    
+
     # Check if /proc/meminfo exists
     if [[ "$(uname -s)" != "Linux" ]]; then
         skip "System info /proc/meminfo is Linux-only"
@@ -210,9 +210,9 @@ test_disk_space_check() {
         skip "Disk space check uses Linux df -BM semantics"
         return 0
     fi
-    
+
     # Uses check_disk_space from lib/common.sh
-    
+
     # Should have at least 100MB free on /tmp
     if check_disk_space "/tmp" 100; then
         pass "Sufficient disk space on /tmp (>100MB)"
@@ -228,7 +228,7 @@ test_disk_space_check() {
 test_power_of_two() {
     echo ""
     echo "=== Testing Power of Two Calculation ==="
-    
+
     assert_equals "1" "$(get_power_of_two 1)" "Power of 2 for 1"
     assert_equals "2" "$(get_power_of_two 2)" "Power of 2 for 2"
     assert_equals "2" "$(get_power_of_two 3)" "Power of 2 for 3"
@@ -245,12 +245,12 @@ test_power_of_two() {
 test_atomic_write() {
     echo ""
     echo "=== Testing Atomic File Write ==="
-    
+
     # Uses atomic_write from lib/common.sh
-    
+
     local test_file="/tmp/test_atomic_$$"
     local test_content="Hello, World!"
-    
+
     if atomic_write "$test_file" "$test_content"; then
         if [[ -f "$test_file" ]] && [[ "$(cat "$test_file")" == "$test_content" ]]; then
             pass "Atomic write successful"
@@ -260,7 +260,7 @@ test_atomic_write() {
     else
         fail "Atomic write failed"
     fi
-    
+
     rm -f "$test_file"
 }
 
@@ -287,7 +287,7 @@ test_performance_defaults() {
 test_power_of_two_edge() {
     echo ""
     echo "=== Testing Power of Two Edge Cases ==="
-    
+
     assert_equals "1" "$(get_power_of_two 0)" "Power of 2 for 0"
     assert_equals "1" "$(get_power_of_two 1)" "Power of 2 for 1 (redundant)"
     assert_equals "1024" "$(get_power_of_two 2000)" "Power of 2 for 2000"
@@ -296,9 +296,9 @@ test_power_of_two_edge() {
 test_count_cpuset_cpus() {
     echo ""
     echo "=== Testing CPUSET CPU Counting ==="
-    
+
     local result
-    
+
     result=$(count_cpuset_cpus "0-3"); assert_equals "4" "$result" "Range 0-3"
     result=$(count_cpuset_cpus "0");    assert_equals "1" "$result" "Single CPU 0"
     result=$(count_cpuset_cpus "0,2,4"); assert_equals "3" "$result" "Multiple singles"
@@ -413,27 +413,27 @@ test_performance_profile_boundaries() {
 test_validate_ipv4_edge() {
     echo ""
     echo "=== Testing IPv4 Validation Edge Cases ==="
-    
+
     # Uses validate_ipv4 from lib/common.sh
-    
+
     if validate_ipv4 "0.0.0.0" 2>/dev/null; then
         pass "Valid IP: 0.0.0.0 (min)"
     else
         fail "Valid IP: 0.0.0.0 should be accepted"
     fi
-    
+
     if validate_ipv4 "255.255.255.255" 2>/dev/null; then
         pass "Valid IP: 255.255.255.255 (max)"
     else
         fail "Valid IP: 255.255.255.255 should be accepted"
     fi
-    
+
     if ! validate_ipv4 "" 2>/dev/null; then
         pass "Invalid IP: empty string"
     else
         fail "Invalid IP: empty string should be rejected"
     fi
-    
+
     if validate_ipv4 "192.168.1.01" 2>/dev/null; then
         pass "IP with leading zeros: 192.168.1.01 (decimally valid)"
     else
@@ -449,7 +449,7 @@ run_all_tests() {
     echo "╔════════════════════════════════════════════════════════╗"
     echo "║   AdGuard Home & Unbound Installer - Test Suite       ║"
     echo "╚════════════════════════════════════════════════════════╝"
-    
+
     test_validate_ipv4
     test_validate_port
     test_system_requirements
@@ -461,7 +461,7 @@ run_all_tests() {
     test_count_cpuset_cpus
     test_performance_profile_boundaries
     test_validate_ipv4_edge
-    
+
     echo ""
     echo "╔════════════════════════════════════════════════════════╗"
     echo "║   Test Summary                                         ║"
@@ -471,7 +471,7 @@ run_all_tests() {
     echo -e "${GREEN}Passed:       $TESTS_PASSED${NC}"
     echo -e "${RED}Failed:       $TESTS_FAILED${NC}"
     echo ""
-    
+
     if (( TESTS_FAILED == 0 )); then
         echo -e "${GREEN}✓ All tests passed!${NC}"
         return 0

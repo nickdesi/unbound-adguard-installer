@@ -53,7 +53,7 @@
   - Port listening
   - Résolution DNS
   - Stats cache
-  
+
 - `check_adguard_health()` - Vérification santé AdGuard Home (5 checks)
   - Status service
   - Fichier config
@@ -155,7 +155,7 @@ download_with_retry "$url" "/tmp/agh_install/AGH.tar.gz" 3
 ```bash
 install_adguard_home() {
     # ... installation existante ...
-    
+
     # Nouveau : Health check automatique
     source "${SCRIPT_DIR}/lib/health_checks.sh"
     if check_adguard_health; then
@@ -184,7 +184,7 @@ LATEST_VER=$(fetch_json_api "https://api.github.com/repos/AdguardTeam/AdGuardHom
 configure_adguard_upstream() {
     # Nouveau : Backup automatique
     create_backup "$AGH_YAML"
-    
+
     # ... modification config existante ...
 }
 ```

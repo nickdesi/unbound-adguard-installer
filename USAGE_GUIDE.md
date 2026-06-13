@@ -73,16 +73,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 install_adguard_home() {
     # ... code existant jusqu'au téléchargement ...
-    
+
     # AVANT
     # wget -qO /tmp/agh_install/AGH.tar.gz "$url"
-    
+
     # APRÈS
     if ! download_with_retry "$url" "/tmp/agh_install/AGH.tar.gz" 3; then
         msg_error "Échec téléchargement AdGuard Home"
         return 1
     fi
-    
+
     # ... reste du code ...
 }
 ```
@@ -92,10 +92,10 @@ install_adguard_home() {
 ```bash
 install_adguard_home() {
     # ... installation existante ...
-    
+
     # NOUVEAU : Vérification santé
     source "${SCRIPT_DIR}/lib/health_checks.sh"
-    
+
     msg_info "Vérification santé post-installation..."
     if check_adguard_health && check_unbound_health; then
         msg_ok "Installation vérifiée et opérationnelle ✓"
@@ -115,7 +115,7 @@ configure_adguard_upstream() {
     if backup_path=$(create_backup "$AGH_YAML"); then
         msg_ok "Backup créé: $backup_path"
     fi
-    
+
     # Modification YAML
     if ! python3 <<PYTHON
 # ... code Python existant ...
@@ -128,7 +128,7 @@ PYTHON
         fi
         return 1
     fi
-    
+
     # ... suite du code ...
 }
 ```
@@ -181,29 +181,29 @@ source "${SCRIPT_DIR}/lib/health_checks.sh"
 main() {
     echo "=== DIAGNOSTIC DNS COMPLET ==="
     echo ""
-    
+
     # 1. Vérifications système
     echo "1. Vérifications système..."
     check_disk_space "/opt" 100
     is_container && echo "  ✓ Conteneur LXC détecté" || echo "  • Système hôte"
-    
+
     # 2. Health checks
     echo ""
     echo "2. Health checks DNS..."
     run_full_health_check
-    
+
     # 3. Performance
     echo ""
     echo "3. Test de performance..."
     benchmark_dns_performance 100
-    
+
     # 4. Rapport
     echo ""
     echo "4. Génération rapport..."
     local report
     report=$(generate_performance_report)
     echo "  Rapport: $report"
-    
+
     echo ""
     echo "=== DIAGNOSTIC TERMINÉ ==="
 }
@@ -221,10 +221,10 @@ source "$(dirname "$0")/lib/common.sh"
 
 preflight_checks() {
     local errors=0
-    
+
     echo "=== PRE-FLIGHT CHECKS ==="
     echo ""
-    
+
     # Vérifier root
     if [[ $EUID -ne 0 ]]; then
         echo "✗ Doit être exécuté en root"
@@ -232,7 +232,7 @@ preflight_checks() {
     else
         echo "✓ Exécution en root"
     fi
-    
+
     # Vérifier OS
     if [[ -f /etc/os-release ]]; then
         source /etc/os-release
@@ -243,7 +243,7 @@ preflight_checks() {
             ((errors++))
         fi
     fi
-    
+
     # Vérifier espace disque
     if check_disk_space "/opt" 500; then
         echo "✓ Espace disque suffisant"
@@ -251,7 +251,7 @@ preflight_checks() {
         echo "✗ Espace disque insuffisant"
         ((errors++))
     fi
-    
+
     # Vérifier ports disponibles
     for port in 53 3000 5335; do
         if is_port_available "$port"; then
@@ -261,7 +261,7 @@ preflight_checks() {
             ((errors++))
         fi
     done
-    
+
     # Vérifier commandes requises
     for cmd in wget curl jq tar; do
         if require_command "$cmd"; then
@@ -271,7 +271,7 @@ preflight_checks() {
             ((errors++))
         fi
     done
-    
+
     echo ""
     if (( errors == 0 )); then
         echo "✓ Tous les checks passés, installation possible"
@@ -335,12 +335,12 @@ done
 
 Vos scripts bénéficient maintenant de :
 
-✅ **25+ fonctions utilitaires** réutilisables  
-✅ **15+ tests automatisés** pour validation  
-✅ **Health checks DNS** complets (Unbound + AdGuard)  
-✅ **Retry logic** pour opérations réseau  
-✅ **Backup/Rollback** automatique  
-✅ **Validation** robuste des entrées  
-✅ **Documentation** complète pour contributeurs  
+✅ **25+ fonctions utilitaires** réutilisables
+✅ **15+ tests automatisés** pour validation
+✅ **Health checks DNS** complets (Unbound + AdGuard)
+✅ **Retry logic** pour opérations réseau
+✅ **Backup/Rollback** automatique
+✅ **Validation** robuste des entrées
+✅ **Documentation** complète pour contributeurs
 
 **Code production-ready selon standards bash-pro ! 🚀**

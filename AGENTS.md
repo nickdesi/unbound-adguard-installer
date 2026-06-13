@@ -67,5 +67,3 @@ This repository contains a **Graphify** knowledge graph at `graphify-out/`.
 - **Test `--test` values** map to `test_*` function names via a `case` switch: `validate_ipv4`, `validate_port`, `system_requirements`, `disk_space_check`, `power_of_two`, `power_of_two_edge`, `count_cpuset_cpus`, `performance_profile_boundaries`, `validate_ipv4_edge`, `atomic_write`, `performance_defaults`.
 - **Commits** follow Conventional Commits (`feat:`, `fix:`, `perf:`, `chore:`, `docs:`, `refactor:`, `test:`).
 - **`docs/` directory** is referenced in `CONTRIBUTING.md` but does not exist in the repo.
-
-

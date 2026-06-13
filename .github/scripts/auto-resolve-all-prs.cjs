@@ -71,7 +71,7 @@ async function run() {
         } catch (fetchErr) {
           execSync(`git fetch origin ${headBranch}`, { stdio: 'pipe' });
         }
-        
+
         execSync(`git checkout ${headBranch}`, { stdio: 'inherit' });
 
         // Lancer le script de résolution de conflit pour cette branche

@@ -1,0 +1,20 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^(data/|graphify-out/)
+      - id: check-added-large-files
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+        exclude: ^(data/|graphify-out/)
+      - id: mixed-line-ending
+        args: ['--fix=auto']
+
+  - repo: https://github.com/koalaman/shellcheck-precommit
+    rev: v0.10.0
+    hooks:
+      - id: shellcheck
+        files: \.sh$
+        args: ["-e", "SC1091"]

@@ -21,14 +21,14 @@ fi
 test_unbound_resolution() {
     local test_domain="google.com"
     local unbound_port="${UNBOUND_PORT:-5335}"
-    
+
     msg_info "Test de résolution DNS via Unbound (port $unbound_port)..."
-    
+
     if ! command -v dig &>/dev/null; then
         msg_warn "dig non disponible, installation de dnsutils..."
         apt-get install -y dnsutils &>/dev/null || return 1
     fi
-    
+
     local result
     if result=$(dig @127.0.0.1 -p "$unbound_port" "$test_domain" +short +timeout=5 2>&1); then
         if [[ -n "$result" ]]; then
@@ -49,9 +49,9 @@ test_unbound_resolution() {
 test_dnssec_validation() {
     local test_domain="dnssec-failed.org"
     local unbound_port="${UNBOUND_PORT:-5335}"
-    
+
     msg_info "Test DNSSEC (doit échouer sur domaine invalide)..."
-    
+
     # This domain has intentionally broken DNSSEC
     if dig @127.0.0.1 -p "$unbound_port" "$test_domain" +timeout=5 2>&1 | grep -q "SERVFAIL"; then
         msg_ok "DNSSEC fonctionne correctement (SERVFAIL attendu)"
@@ -66,7 +66,7 @@ test_dnssec_validation() {
 # Usage: test_dot_connectivity
 test_dot_connectivity() {
     msg_info "Test connectivité DoT (DNS-over-TLS)..."
-    
+
     # Test connection to Cloudflare DoT
     if timeout 5 openssl s_client -connect 1.1.1.1:853 </dev/null 2>&1 | grep -q "CONNECTED"; then
         msg_ok "Connectivité DoT fonctionnelle"
@@ -125,9 +125,9 @@ is_adguard_web_reachable() {
 # Usage: check_unbound_health
 check_unbound_health() {
     local errors=0
-    
+
     msg_info "Vérification santé Unbound..."
-    
+
     # 1. Service status
     if ! systemctl is-active --quiet unbound; then
         msg_error "Service Unbound non actif"
@@ -135,7 +135,7 @@ check_unbound_health() {
     else
         msg_ok "Service Unbound actif"
     fi
-    
+
     # 2. Config validity
     local checkconf_output=""
     local checkconf_ok=false
@@ -156,7 +156,7 @@ check_unbound_health() {
     else
         msg_ok "Configuration Unbound valide"
     fi
-    
+
     # 3. Port listening
     if ! ss -tulnp | grep -q ":${UNBOUND_PORT:-5335}\s.*unbound"; then
         msg_error "Unbound n'écoute pas sur le port ${UNBOUND_PORT:-5335}"
@@ -164,12 +164,12 @@ check_unbound_health() {
     else
         msg_ok "Unbound écoute sur le port ${UNBOUND_PORT:-5335}"
     fi
-    
+
     # 4. DNS resolution test
     if ! test_unbound_resolution; then
         ((++errors))
     fi
-    
+
     # 5. Cache stats
     if command -v unbound-control &>/dev/null; then
         local cache_hits
@@ -178,7 +178,7 @@ check_unbound_health() {
             msg_ok "Cache Unbound fonctionnel ($cache_hits hits)"
         fi
     fi
-    
+
     return "$errors"
 }
 
@@ -190,7 +190,7 @@ check_adguard_health() {
     agh_port=$(get_adguard_web_port)
 
     msg_info "Vérification santé AdGuard Home..."
-    
+
     # 1. Service status
     if ! systemctl is-active --quiet AdGuardHome; then
         msg_error "Service AdGuard Home non actif"
@@ -198,7 +198,7 @@ check_adguard_health() {
     else
         msg_ok "Service AdGuard Home actif"
     fi
-    
+
     # 2. Config file exists
     if [[ ! -f "${AGH_YAML:-/opt/AdGuardHome/AdGuardHome.yaml}" ]]; then
         msg_error "Fichier de configuration AdGuard introuvable"
@@ -206,7 +206,7 @@ check_adguard_health() {
     else
         msg_ok "Fichier de configuration AdGuard présent"
     fi
-    
+
     # 3. Web port listening
     if ! is_port_listening "$agh_port"; then
         msg_error "AdGuard Home n'écoute pas sur le port ${agh_port}"
@@ -223,7 +223,7 @@ check_adguard_health() {
             msg_warn "Interface web AdGuard non accessible sur le port ${agh_port} (première installation ?)"
         fi
     fi
-    
+
     # 5. Upstream configuration
     if [[ -f "${AGH_YAML:-/opt/AdGuardHome/AdGuardHome.yaml}" ]]; then
         if grep -q "127.0.0.1:${UNBOUND_PORT:-5335}" "${AGH_YAML}"; then
@@ -233,7 +233,7 @@ check_adguard_health() {
             ((++errors))
         fi
     fi
-    
+
     return "$errors"
 }
 
@@ -248,7 +248,7 @@ generate_performance_report() {
     report_file="/tmp/dns_performance_report_$(date +%s).txt"
     local agh_port
     agh_port=$(get_adguard_web_port)
-    
+
     local meminfo
     meminfo=$(awk '/MemTotal|MemAvailable/ {printf "%.0f ", $2/1024}' /proc/meminfo)
     local mem_total=${meminfo%% *}
@@ -266,7 +266,7 @@ RAM Available: ${mem_avail} MB
 
 --- UNBOUND CONFIG ---
 EOF
-    
+
     local UNBOUND_CONF_NEW="/etc/unbound/unbound.conf.d/99-adguard-unbound-installer.conf"
     if [[ -f "$UNBOUND_CONF_NEW" ]]; then
         awk 'BEGIN {
@@ -278,22 +278,22 @@ EOF
             print v[$1]": "$2
         }' "$UNBOUND_CONF_NEW" >> "$report_file"
     fi
-    
+
     cat >> "$report_file" <<EOF
 
 --- UNBOUND STATS ---
 EOF
-    
+
     if command -v unbound-control &>/dev/null; then
         unbound-control stats_noreset 2>/dev/null >> "$report_file" || echo "Stats non disponibles" >> "$report_file"
     fi
-    
+
     cat >> "$report_file" <<EOF
 
 --- NETWORK STATE ---
 DNS Ports:
 EOF
-    
+
     ss -tulnp | grep -E ":(53|5335|${agh_port})\\s" >> "$report_file" || true
 
     msg_ok "Rapport généré: $report_file"
@@ -383,37 +383,37 @@ benchmark_dns_performance() {
 # Usage: run_full_health_check
 run_full_health_check() {
     local total_errors=0
-    
+
     echo ""
     echo "=========================================="
     echo "  HEALTH CHECK COMPLET"
     echo "=========================================="
     echo ""
-    
+
     # Unbound
     check_unbound_health; local ub_rc=$?
     if (( ub_rc != 0 )); then
         total_errors=$((total_errors + ub_rc))
     fi
-    
+
     echo ""
-    
+
     # AdGuard Home
     check_adguard_health; local agh_rc=$?
     if (( agh_rc != 0 )); then
         total_errors=$((total_errors + agh_rc))
     fi
-    
+
     echo ""
-    
+
     # DNSSEC
     test_dnssec_validation || true
-    
+
     echo ""
-    
+
     # DoT
     test_dot_connectivity || true
-    
+
     echo ""
     echo "=========================================="
     if (( total_errors == 0 )); then
