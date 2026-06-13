@@ -40,14 +40,14 @@ jobs:
         env:
           BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
-        run: node .github/scripts/resolve-bolt-conflict.js
+        run: node .github/scripts/resolve-bolt-conflict.cjs
 
       - name: Run AI Reviewer
         if: env.GEMINI_API_KEY != ''
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_PR_NUMBER: ${{ inputs.pr_number || github.event.pull_request.number }}
-        run: node .github/scripts/ai-pr-reviewer.js
+        run: node .github/scripts/ai-pr-reviewer.cjs
 
 
 
