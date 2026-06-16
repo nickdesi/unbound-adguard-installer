@@ -18,16 +18,15 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
-          fetch-depth: 0 # Nécessaire pour avoir l'historique complet des branches
+          fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
-
-      - name: Resolve Conflicts on Open PRs
+      - name: Update Open PRs
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node .github/scripts/auto-resolve-all-prs.cjs
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for pr in $(gh pr list --json number --jq '.[].number'); do
+            echo "Updating PR #$pr..."
+            gh pr update-branch $pr || echo "Failed to update PR #$pr"
+          done
