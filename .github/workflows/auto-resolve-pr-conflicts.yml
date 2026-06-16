@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - master
 
 permissions:
   pull-requests: write
@@ -26,7 +27,41 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for pr in $(gh pr list --json number --jq '.[].number'); do
-            echo "Updating PR #$pr..."
-            gh pr update-branch $pr || echo "Failed to update PR #$pr"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin
+
+          # Detect the default branch (main or master)
+          DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@')
+          if [ -z "$DEFAULT_BRANCH" ]; then
+            if git show-ref --verify --quiet refs/remotes/origin/main; then
+              DEFAULT_BRANCH="main"
+            else
+              DEFAULT_BRANCH="master"
+            fi
+          fi
+          echo "Default branch detected: $DEFAULT_BRANCH"
+
+          # Get list of open PRs owned by the same user/org (nickdesi or sickn33) to allow pushing
+          for pr_info in $(gh pr list --state open --json number,headRefName,headRepositoryOwner --jq '.[] | select(.headRepositoryOwner.login == "nickdesi" or .headRepositoryOwner.login == "sickn33") | "\(.number):\(.headRefName)"'); do
+            PR_NUM=$(echo "$pr_info" | cut -d':' -f1)
+            PR_BRANCH=$(echo "$pr_info" | cut -d':' -f2)
+
+            echo "----------------------------------------"
+            echo "Processing PR #$PR_NUM on branch '$PR_BRANCH'"
+            echo "----------------------------------------"
+
+            git checkout "$PR_BRANCH" || git checkout -b "$PR_BRANCH" "origin/$PR_BRANCH"
+
+            if git merge "origin/$DEFAULT_BRANCH" --no-edit; then
+              if git push origin "HEAD:$PR_BRANCH"; then
+                echo "PR #$PR_NUM successfully merged with $DEFAULT_BRANCH and pushed."
+              else
+                echo "Failed to push merged branch for PR #$PR_NUM."
+              fi
+            else
+              echo "PR #$PR_NUM has true conflicts. Aborting merge."
+              git merge --abort
+            fi
           done
