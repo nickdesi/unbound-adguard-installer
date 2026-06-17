@@ -4,13 +4,17 @@ on:
   pull_request:
     types: [opened, synchronize]
     paths-ignore:
-      - '.jules/**'
       - '**.md'
   workflow_dispatch:
     inputs:
       pr_number:
-        description: 'Numéro de la Pull Request à analyser'
+        description: 'PR number to review'
         required: true
+        type: string
+      gemini_model:
+        description: 'Gemini model to use'
+        required: false
+        default: 'gemini-2.5-flash'
         type: string
 
 permissions:
@@ -22,27 +26,22 @@ env:
 
 jobs:
   review:
-    # Optionnel: pour limiter la revue aux PR créées par un utilisateur spécifique (ex: Jules)
-    # Remplacer 'jules-username' par l'identifiant GitHub de Jules
-    # if: github.event.pull_request.user.login == 'jules-username'
-
     runs-on: ubuntu-latest
 
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_MODEL: ${{ inputs.gemini_model || 'gemini-2.5-flash' }}
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0 # Nécessaire pour avoir l'historique et faire le merge
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 24
-
-
 
       - name: Run AI Reviewer
         if: env.GEMINI_API_KEY != ''
