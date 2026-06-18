@@ -986,7 +986,7 @@ ${anchor_directive}
     aggressive-nsec: ${AGGRESSIVE_NSEC}
     hide-identity: yes
     hide-version: yes
-    refuse-any: yes
+    deny-any: yes
     harden-glue: yes
     harden-dnssec-stripped: yes
     harden-algo-downgrade: yes
