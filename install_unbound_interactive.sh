@@ -709,11 +709,20 @@ calculate_optimized_settings() {
     else
         TARGET_FETCH_POLICY='"3 1 1 0 0 0"'   # plus de bureaux de reso
     fi
-    # cache-min-ttl: 0 = honore le TTL upstream, idéal pour TTL courts (AWS)
-    # mais augmente la charge upstream. On garde un min bas.
-    CACHE_MIN_TTL=0
-    # cache-max-negative-ttl: on garde les réponses négatives moins longtemps
-    CACHE_MAX_NEGATIVE_TTL=300            # 5min (vs 3600 défaut)
+    # cache-min-ttl: LEVIER #1 du hit ratio. 0 (ancien) honorait les TTL
+    # courts des CDN/cloud (30-60s) -> cache quasi inutile (~20% hit observe).
+    # On force un plancher agressif: les domaines populaires restent en
+    # cache meme si l'upstream annonce un TTL court. serve-original-ttl
+    # conserve un TTL realiste cote client (AdGuard re-interroge a l'heure
+    # reelle, Unbound repond depuis son cache long -> hit ratio eleve).
+    # Compromis: une IP qui change est vue avec jusqu'a 1h de retard.
+    # Pour un comportement plus conservateur, abaisser a 900 (15min).
+    CACHE_MIN_TTL=3600                    # 1h plancher (cache extreme)
+    # cache-max-ttl: plafond haut pour garder longtemps les entrees stables.
+    CACHE_MAX_TTL=259200                  # 72h
+    # cache-max-negative-ttl: reponses negatives gardees peu de temps
+    # (evite de figer une panne transitoire / un NXDOMAIN temporaire).
+    CACHE_MAX_NEGATIVE_TTL=60             # 1min
 }
 
 # --- Cache Unbound en tmpfs (expérimental) ---
@@ -958,7 +967,7 @@ ${anchor_directive}
     # --- Cache & latence ---
     cache-min-ttl: ${CACHE_MIN_TTL}
     cache-max-ttl: ${CACHE_MAX_TTL}
-    cache-max-negative-ttl: 300
+    cache-max-negative-ttl: ${CACHE_MAX_NEGATIVE_TTL}
     serve-expired: yes
     serve-expired-ttl: ${SERVE_EXPIRED_TTL}
     serve-expired-client-timeout: ${SERVE_EXPIRED_CLIENT_TIMEOUT}
