@@ -361,13 +361,13 @@ test_performance_profile_boundaries() {
             fail "${ram}MB: cache rrset décroissant (${rrset}m < ${prev_rrset}m)"
         fi
 
-        if (( qpt >= 512 && qpt <= 2048 )); then
+        if (( qpt >= 512 && qpt <= 4096 )); then
             pass "${ram}MB: num-queries-per-thread borné (${qpt})"
         else
             fail "${ram}MB: num-queries-per-thread hors bornes (${qpt})"
         fi
 
-        if (( outgoing >= 512 && outgoing <= 4096 )); then
+        if (( outgoing >= 512 && outgoing <= 16384 )); then
             pass "${ram}MB: outgoing-range borné (${outgoing})"
         else
             fail "${ram}MB: outgoing-range hors bornes (${outgoing})"

@@ -394,15 +394,19 @@ apply_sysctl_tuning() {
         msg_warn "BBR indisponible, fallback sur cubic"
     fi
 
-    # Taille des buffers par profil RAM
+    # Taille des buffers par profil RAM (tenant compte d'AdGuard sur le LXC)
     get_system_resources
     local buf_low buf_high backlog
-    if (( RAM_MB >= 4096 )); then
-        buf_low=16777216; buf_high=33554432; backlog=100000
+    if (( RAM_MB >= 8192 )); then
+        buf_low=16777216; buf_high=33554432; backlog=250000
+    elif (( RAM_MB >= 4096 )); then
+        buf_low=16777216; buf_high=33554432; backlog=150000
+    elif (( RAM_MB >= 2048 )); then
+        buf_low=8388608; buf_high=16777216; backlog=100000
     elif (( RAM_MB >= 1024 )); then
-        buf_low=8388608; buf_high=16777216; backlog=75000
+        buf_low=4194304; buf_high=8388608; backlog=75000
     else
-        buf_low=4194304; buf_high=8388608; backlog=50000
+        buf_low=2097152; buf_high=4194304; backlog=50000
     fi
 
     # Active fq qdisc pour BBR si dispo (nécessite sch_fq)
@@ -413,7 +417,7 @@ apply_sysctl_tuning() {
 
     cat > "$SYSCTL_CONF" <<EOF
 # Optimisations DNS avancées (Généré par Installer v${SCRIPT_VERSION})
-# Profil RAM: ${RAM_MB}MB
+# Profil RAM: ${RAM_MB}MB — AdGuard Home + Unbound cohabitent
 
 # --- Buffers réseau adaptatifs ---
 net.core.rmem_max = ${buf_high}
@@ -421,12 +425,20 @@ net.core.wmem_max = ${buf_high}
 net.core.rmem_default = ${buf_low}
 net.core.wmem_default = ${buf_low}
 net.core.netdev_max_backlog = ${backlog}
+net.core.netdev_budget = 50000
+net.core.netdev_budget_usecs = 5000
 net.core.optmem_max = 65536
 net.core.somaxconn = 4096
 
 # --- UDP / DNS ---
 net.ipv4.udp_mem = 65536 131072 262144
+net.ipv4.udp_rmem_min = 8192
+net.ipv4.udp_wmem_min = 8192
 net.ipv4.ip_local_port_range = 1024 65535
+
+# --- TCP per-socket memory ---
+net.ipv4.tcp_rmem = 4096 87380 ${buf_high}
+net.ipv4.tcp_wmem = 4096 65536 ${buf_high}
 
 # --- TCP tuning avancé ---
 net.ipv4.tcp_congestion_control = ${congestion}
@@ -499,6 +511,15 @@ get_cgroup_ram_limit_mb() {
     return 1
 }
 
+# Détection de connectivité IPv6. Si absent, on désactive do-ip6 et on
+# préfère IPv4 pour éviter les timeouts de résolution sur les forwarders.
+has_ipv6_connectivity() {
+    [[ -d /proc/sys/net/ipv6 ]] || return 1
+    ip -6 route show 2>/dev/null | grep -q default || return 1
+    ip -6 addr show 2>/dev/null | grep -qE 'inet6 [23][0-9a-fA-F]' || return 1
+    return 0
+}
+
 _RESOURCES_CACHED=false
 get_system_resources() {
     [[ "$_RESOURCES_CACHED" == "true" ]] && return 0
@@ -544,29 +565,36 @@ calculate_optimized_settings() {
         fi
     fi
 
+    # Unbound partage le LXC avec AdGuard Home : on réserve au moins
+    # 1 cœur pour AdGuard + le système, puis on adapte à la RAM.
     NUM_THREADS=$CPU_CORES
+    if (( CPU_CORES > 1 )); then
+        NUM_THREADS=$(( CPU_CORES - 1 ))
+    fi
     if (( RAM_MB <= 1024 && NUM_THREADS > 1 )); then
         NUM_THREADS=1
     elif (( RAM_MB < 2048 && NUM_THREADS > 2 )); then
         NUM_THREADS=2
     elif (( RAM_MB < 4096 && NUM_THREADS > 4 )); then
         NUM_THREADS=4
-    elif (( NUM_THREADS > 8 )); then
-        NUM_THREADS=8
+    elif (( NUM_THREADS > 16 )); then
+        NUM_THREADS=16
     fi
 
     CACHE_SLABS=$(get_power_of_two "$NUM_THREADS")
     (( CACHE_SLABS < 1 )) && CACHE_SLABS=1
 
     local reserve_mb cache_budget_mb rrset_mb msg_mb key_mb neg_mb
-    reserve_mb=$(( RAM_MB / 4 ))
-    (( reserve_mb < 128 )) && reserve_mb=128
-    (( reserve_mb > 1024 )) && reserve_mb=1024
+    # Réserver plus de RAM pour AdGuard Home (même LXC). Minimum 256 MB,
+    # jusqu'à 2 GB sur les gros conteneurs pour laisser de la marge.
+    reserve_mb=$(( RAM_MB / 3 ))
+    (( reserve_mb < 256 )) && reserve_mb=256
+    (( reserve_mb > 2048 )) && reserve_mb=2048
 
     cache_budget_mb=$(( RAM_MB - reserve_mb ))
     (( cache_budget_mb < 96 )) && cache_budget_mb=96
     local max_cache=$(( RAM_MB / 2 ))
-    (( max_cache > 8192 )) && max_cache=8192
+    (( max_cache > 12288 )) && max_cache=12288
     (( cache_budget_mb > max_cache )) && cache_budget_mb=$max_cache
 
     rrset_mb=$(( (cache_budget_mb * 2) / 3 ))
@@ -576,85 +604,73 @@ calculate_optimized_settings() {
 
     key_mb=$(( rrset_mb / 8 ))
     (( key_mb < 8 )) && key_mb=8
-    (( key_mb > 128 )) && key_mb=128
+    (( key_mb > 256 )) && key_mb=256
 
     neg_mb=$(( msg_mb / 4 ))
     (( neg_mb < 8 )) && neg_mb=8
-    (( neg_mb > 128 )) && neg_mb=128
+    (( neg_mb > 256 )) && neg_mb=256
 
     RRSET_CACHE_SIZE="${rrset_mb}m"
     MSG_CACHE_SIZE="${msg_mb}m"
     KEY_CACHE_SIZE="${key_mb}m"
     NEG_CACHE_SIZE="${neg_mb}m"
 
+    # Buffers UDP plus généreux mais proportionnés à la RAM partagée.
     if (( RAM_MB < 1536 )); then
         SO_RCVBUF="1m"; SO_SNDBUF="1m"
     elif (( RAM_MB < 4096 )); then
-        SO_RCVBUF="2m"; SO_SNDBUF="2m"
+        SO_RCVBUF="4m"; SO_SNDBUF="4m"
     else
-        local buf_mb=$(( NUM_THREADS * 2 ))
+        local buf_mb=$(( NUM_THREADS * 4 ))
         if (( buf_mb < 4 )); then buf_mb=4; fi
-        if (( buf_mb > 8 )); then buf_mb=8; fi
+        if (( buf_mb > 16 )); then buf_mb=16; fi
         SO_RCVBUF="${buf_mb}m"; SO_SNDBUF="${buf_mb}m"
     fi
 
     INFRA_HOSTS=$(( 10000 + (RAM_MB * 12) + (NUM_THREADS * 1000) ))
-    (( INFRA_HOSTS > 100000 )) && INFRA_HOSTS=100000
+    (( INFRA_HOSTS > 200000 )) && INFRA_HOSTS=200000
 
-    # Évalue les ports disponibles système pour caler outgoing-range
+    # outgoing-range: Unbound recommande "a very large value". On sature
+    # jusqu'à 16k FD mais on ne dépasse jamais la moitié des ports locaux.
     local sys_ports_high
     sys_ports_high=$(sysctl -n net.ipv4.ip_local_port_range 2>/dev/null | awk '{print $2}' || echo 65535)
-    OUTGOING_RANGE=$(( 384 + (NUM_THREADS * 196) + (RAM_MB / 8) ))
-    (( OUTGOING_RANGE < 384 )) && OUTGOING_RANGE=384
+    OUTGOING_RANGE=$(( 512 + (NUM_THREADS * 256) + (RAM_MB / 8) ))
+    (( OUTGOING_RANGE < 512 )) && OUTGOING_RANGE=512
     (( OUTGOING_RANGE > sys_ports_high / 2 )) && OUTGOING_RANGE=$(( sys_ports_high / 2 ))
-    (( OUTGOING_RANGE > 4096 )) && OUTGOING_RANGE=4096
+    (( OUTGOING_RANGE > 16384 )) && OUTGOING_RANGE=16384
 
     QUERIES_PER_THREAD=$(( 512 + (RAM_MB / (NUM_THREADS * 4)) ))
     (( QUERIES_PER_THREAD < 512 )) && QUERIES_PER_THREAD=512
-    (( QUERIES_PER_THREAD > 2048 )) && QUERIES_PER_THREAD=2048
+    (( QUERIES_PER_THREAD > 4096 )) && QUERIES_PER_THREAD=4096
 
     EDNS_BUFFER=1232
 
-    if (( RAM_MB < 1024 )); then
-        CACHE_MIN_TTL=60
-        CACHE_MAX_TTL=43200
-        SERVE_EXPIRED_TTL=43200
-        SERVE_EXPIRED_REPLY_TTL=30
-        SERVE_EXPIRED_CLIENT_TIMEOUT=1800
-    elif (( RAM_MB < 4096 )); then
-        CACHE_MIN_TTL=120
-        CACHE_MAX_TTL=86400
-        SERVE_EXPIRED_TTL=86400
-        SERVE_EXPIRED_REPLY_TTL=60
-        SERVE_EXPIRED_CLIENT_TIMEOUT=1800
-    else
-        CACHE_MIN_TTL=180
-        CACHE_MAX_TTL=172800
-        SERVE_EXPIRED_TTL=172800
-        SERVE_EXPIRED_REPLY_TTL=120
-        SERVE_EXPIRED_CLIENT_TIMEOUT=2400
-    fi
+    # TTLs: mode "cache extrême" pour maximiser le hit ratio, indépendamment
+    # de la RAM. serve-expired-client-timeout=0 renvoie immédiatement la
+    # réponse stale tout en rafraîchissant en tâche de fond.
+    CACHE_MIN_TTL=3600
+    CACHE_MAX_TTL=259200
+    CACHE_MAX_NEGATIVE_TTL=60
+    CACHE_MIN_NEGATIVE_TTL=0
+    SERVE_EXPIRED_TTL=$(( 86400 * 2 ))
+    SERVE_EXPIRED_REPLY_TTL=10
+    SERVE_EXPIRED_CLIENT_TIMEOUT=0
 
-    # JOSTLE_TIMEOUT : thread unique = pas de concurrence, on veut un timeout bas
-    # target-fetch-policy: moins agressif sur mono-cœur
+    # --- Target fetch policy & infra ---
+    # Plus agressif en multi-thread pour préchauffer plus de branches.
     if (( NUM_THREADS <= 1 )); then
-        TARGET_FETCH_POLICY='"1 0 0 0 0 0"'
+        TARGET_FETCH_POLICY='"2 0 0 0 0 0"'
     else
-        TARGET_FETCH_POLICY='"2 1 0 0 0 0"'
+        TARGET_FETCH_POLICY='"3 1 1 0 0 0"'
     fi
 
-    # infra-host-ttl : plus de infohosts = ttl plus long pour stabiliser
-    if (( INFRA_HOSTS >= 50000 )); then
-        INFRA_HOST_TTL=1800
-    else
-        INFRA_HOST_TTL=900
-    fi
+    INFRA_HOST_TTL=300
+    INFRA_CACHE_MIN_RTT=100
 
     JOSTLE_TIMEOUT=$(( 80 + (NUM_THREADS * 30) + (RAM_MB / 512) ))
     (( JOSTLE_TIMEOUT < 80 )) && JOSTLE_TIMEOUT=80
     (( JOSTLE_TIMEOUT > 500 )) && JOSTLE_TIMEOUT=500
 
-    # unwanted-reply-threshold : plus de RAM = plus de tolérance au trafic erroné
     if (( RAM_MB >= 4096 )); then
         UNWANTED_REPLY_THRESHOLD=10000000
     elif (( RAM_MB >= 1024 )); then
@@ -663,66 +679,44 @@ calculate_optimized_settings() {
         UNWANTED_REPLY_THRESHOLD=10000
     fi
 
-    # TCP concurrency: mono-cœur épuise vite 10 connexions entrantes par défaut
     if (( NUM_THREADS <= 1 )); then
-        INCOMING_NUM_TCP=3; OUTGOING_NUM_TCP=5; RATELIMIT_VAL=200
+        INCOMING_NUM_TCP=5; OUTGOING_NUM_TCP=10; RATELIMIT_VAL=200
     elif (( NUM_THREADS <= 3 )); then
-        INCOMING_NUM_TCP=5; OUTGOING_NUM_TCP=10; RATELIMIT_VAL=500
+        INCOMING_NUM_TCP=10; OUTGOING_NUM_TCP=20; RATELIMIT_VAL=500
     else
-        INCOMING_NUM_TCP=10; OUTGOING_NUM_TCP=20; RATELIMIT_VAL=1000
+        INCOMING_NUM_TCP=20; OUTGOING_NUM_TCP=40; RATELIMIT_VAL=1000
     fi
 
-    # NSEC agressif = requêtes supplémentaires, gaspillage sur faible RAM
     AGGRESSIVE_NSEC="yes"
     (( RAM_MB < 1024 )) && AGGRESSIVE_NSEC="no"
 
     SO_REUSEPORT="yes"
-    if (( NUM_THREADS == 1 )); then
-        SO_REUSEPORT="no"
-    fi
+    (( NUM_THREADS == 1 )) && SO_REUSEPORT="no"
 
-    # --- Prefetch & Serve-Stale avancés (expérimental) ---
-    # serve-expired-ttl: temps max pendant lequel Unbound garde une entrée
-    # expirée en cache. Valeurs agressives : 24-48h pour max hit.
-    SERVE_EXPIRED_TTL=$(( 86400 * 2 ))   # 48h (vs 12h/24h/48h avant)
-    # serve-expired-reply-ttl: TTL minimal renvoyé au client pour une
-    # réponse stale. Valeur basse = le client revient vite chercher la
-    # version fraîche.
-    SERVE_EXPIRED_REPLY_TTL=10            # 10s (vs 30/60/120 avant)
-    # serve-expired-client-timeout: temps max d'attente d'une réponse
-    # fraîche avant de servir la stale. Plus bas = latence meilleure
-    # mais plus de stale servie.
-    SERVE_EXPIRED_CLIENT_TIMEOUT=0        # 0ms - return stale immediately, resolve in background
+    # --- Qname minimisation: désactivée avec forwarders DoT ---
+    # Unbound forward tout au resolver upstream qui fait déjà la récursion
+    # complète. qname-minimisation ajoute des allers-retours inutiles car
+    # le forwarder ne reçoit que le sous-domaine minimum. Désactivé pour
+    # maximiser la latence et la compatibilité (certains forwarders DoT
+    # répondent FORMERR sur les qnames minimisés).
+    QNAME_MINIMISATION="no"
 
-    # prefetch: déclenché dans le dernier 10% du TTL.
-    # prefetch-key: pareil pour les clés DNSSEC.
-    # Pas de prefetch-behavior: active dans Unbound < 1.22 (feature request #1340),
-    # mais on maximise l'effet avec des TTL agressifs.
-    # infra-host-ttl: temps de cache des métriques serveur (RTT, lameness).
-    # Plus bas = failover plus rapide mais plus de requêtes de probing.
-    INFRA_HOST_TTL=300                    # 5min (vs 900/1800 avant)
-    # infra-cache-min-rtt: seuil bas pour retransmit rapide sur forwarders
-    INFRA_CACHE_MIN_RTT=100              # 100ms (vs 50 défaut)
-    # target-fetch-policy: plus agressif pour multi-thread
-    if (( NUM_THREADS <= 1 )); then
-        TARGET_FETCH_POLICY='"2 0 0 0 0 0"'
-    else
-        TARGET_FETCH_POLICY='"3 1 1 0 0 0"'   # plus de bureaux de reso
-    fi
-    # cache-min-ttl: LEVIER #1 du hit ratio. 0 (ancien) honorait les TTL
-    # courts des CDN/cloud (30-60s) -> cache quasi inutile (~20% hit observe).
-    # On force un plancher agressif: les domaines populaires restent en
-    # cache meme si l'upstream annonce un TTL court. serve-original-ttl
-    # conserve un TTL realiste cote client (AdGuard re-interroge a l'heure
-    # reelle, Unbound repond depuis son cache long -> hit ratio eleve).
-    # Compromis: une IP qui change est vue avec jusqu'a 1h de retard.
-    # Pour un comportement plus conservateur, abaisser a 900 (15min).
-    CACHE_MIN_TTL=3600                    # 1h plancher (cache extreme)
-    # cache-max-ttl: plafond haut pour garder longtemps les entrees stables.
-    CACHE_MAX_TTL=259200                  # 72h
-    # cache-max-negative-ttl: reponses negatives gardees peu de temps
-    # (evite de figer une panne transitoire / un NXDOMAIN temporaire).
-    CACHE_MAX_NEGATIVE_TTL=60             # 1min
+    # --- Réseau avancé ---
+    # delay-close: évite les rebonds de paquets UDP retardataires contre
+    # un port fermé, ce qui gonfle les compteurs unwanted-reply.
+    DELAY_CLOSE=2000
+    # sock-queue-timeout: dropper les requêtes UDP > 3s dans le buffer
+    # socket. Évite l'accumulation de requêtes obsolètes après un downtime.
+    SOCK_QUEUE_TIMEOUT=3
+    # tcp-reuse-timeout: garder les connexions TCP DoT ouvertes 30s pour
+    # réduire le handshake TLS coûteux sur les forwarders.
+    TCP_REUSE_TIMEOUT=30000
+    # max-reuse-tcp-queries: 500 requêtes max par connexion TCP réutilisée
+    # avant rotation pour éviter les stale connections.
+    MAX_REUSE_TCP_QUERIES=500
+
+    # --- DNSSEC ---
+    VAL_BOGUS_TTL=60
 }
 
 # --- Cache Unbound en tmpfs (expérimental) ---
@@ -833,8 +827,11 @@ IOWeight=500
 OOMScoreAdjust=-500
 # CPU scheduling: idle poll évite les wakeups inutiles
 CPUSchedulingPolicy=idle
-# Nice élevé = basse priorité CPU (bon citoyen dans le LXC)
 Nice=5
+# Limite fichiers ouverts: outgoing-range × threads + marge
+LimitNOFILE=65536
+# Limite processus: threads + overhead système
+LimitNPROC=4096
 CPUFEOF
     # Remplace le placeholder par la valeur réelle
     local cpu_range="0-$((CPU_CORES-1))"
@@ -913,6 +910,14 @@ install_unbound() {
             ;;
     esac
 
+    # Désactiver IPv6 sortant si pas de connectivité pour éviter les
+    # timeouts coûteux sur les forwarders DoT.
+    local do_ip6="yes" prefer_ip4="no"
+    if ! has_ipv6_connectivity; then
+        do_ip6="no"
+        prefer_ip4="yes"
+    fi
+
     if [[ "$DRY_RUN" != "true" ]]; then
         mkdir -p /etc/unbound/unbound.conf.d /var/lib/unbound
         cat > "${UNBOUND_CONF}.tmp" <<'EOF'
@@ -926,12 +931,14 @@ server:
     interface: ::1
     port: ${UNBOUND_PORT}
     do-ip4: yes
-    do-ip6: yes
+    do-ip6: ${do_ip6}
+    prefer-ip4: ${prefer_ip4}
     do-udp: yes
     do-tcp: yes
     chroot: ""
     username: "unbound"
     directory: "/etc/unbound"
+    pidfile: "/run/unbound/unbound.pid"
     logfile: ""
     use-syslog: yes
     root-hints: "${ROOT_HINTS_FILE}"
@@ -968,19 +975,27 @@ ${anchor_directive}
     cache-min-ttl: ${CACHE_MIN_TTL}
     cache-max-ttl: ${CACHE_MAX_TTL}
     cache-max-negative-ttl: ${CACHE_MAX_NEGATIVE_TTL}
+    cache-min-negative-ttl: ${CACHE_MIN_NEGATIVE_TTL}
     serve-expired: yes
     serve-expired-ttl: ${SERVE_EXPIRED_TTL}
+    serve-expired-ttl-reset: yes
     serve-expired-client-timeout: ${SERVE_EXPIRED_CLIENT_TIMEOUT}
     serve-expired-reply-ttl: ${SERVE_EXPIRED_REPLY_TTL}
     prefetch: yes
     prefetch-key: yes
     serve-original-ttl: yes
+    ede: yes
+    ede-serve-expired: yes
     unwanted-reply-threshold: ${UNWANTED_REPLY_THRESHOLD}
 
     # --- TCP & Connexions avancées ---
     incoming-num-tcp: ${INCOMING_NUM_TCP}
     outgoing-num-tcp: ${OUTGOING_NUM_TCP}
     ratelimit: ${RATELIMIT_VAL}
+    delay-close: ${DELAY_CLOSE}
+    sock-queue-timeout: ${SOCK_QUEUE_TIMEOUT}
+    tcp-reuse-timeout: ${TCP_REUSE_TIMEOUT}
+    max-reuse-tcp-queries: ${MAX_REUSE_TCP_QUERIES}
 
     # --- Sécurité & Vie privée ---
     aggressive-nsec: ${AGGRESSIVE_NSEC}
@@ -990,8 +1005,9 @@ ${anchor_directive}
     harden-glue: yes
     harden-dnssec-stripped: yes
     harden-algo-downgrade: yes
-    qname-minimisation: yes
+    qname-minimisation: ${QNAME_MINIMISATION}
     use-caps-for-id: no
+    val-bogus-ttl: ${VAL_BOGUS_TTL}
     private-address: 192.168.0.0/16
     private-address: 10.0.0.0/8
     private-address: 172.16.0.0/12
