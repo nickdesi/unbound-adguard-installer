@@ -919,7 +919,7 @@ install_unbound() {
     fi
 
     if [[ "$DRY_RUN" != "true" ]]; then
-        mkdir -p /etc/unbound/unbound.conf.d /var/lib/unbound
+        mkdir -p /etc/unbound/unbound.conf.d /var/lib/unbound /run/unbound
         cat > "${UNBOUND_CONF}.tmp" <<'EOF'
 include: "/etc/unbound/unbound.conf.d/*.conf"
 EOF
