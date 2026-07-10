@@ -7,6 +7,7 @@
 [![CI](https://github.com/nickdesi/unbound-adguard-installer/actions/workflows/ci.yml/badge.svg)](https://github.com/nickdesi/unbound-adguard-installer/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/github/v/release/nickdesi/unbound-adguard-installer?label=version)](https://github.com/nickdesi/unbound-adguard-installer/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Security Policy](https://img.shields.io/badge/Security-Policy-blue.svg)](SECURITY.md)
 [![ShellCheck](https://img.shields.io/badge/ShellCheck-passing-brightgreen.svg)](https://github.com/koalaman/shellcheck)
 [![Platform](https://img.shields.io/badge/platform-Proxmox%20LXC-orange.svg)](https://www.proxmox.com/)
 
