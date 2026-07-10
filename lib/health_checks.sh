@@ -487,11 +487,20 @@ generate_dnsperf_queryfile() {
         "nodejs.org A"
     )
     local num_domains=${#domains[@]}
-    local i
+    local blocks=$(( num / num_domains ))
+    local rem=$(( num % num_domains ))
+    local i r
     true > "$output"
-    for ((i=0; i<num; i++)); do
-        echo "${domains[$((i % num_domains))]}" >> "$output"
+    # Écriture par blocs (un seul open/écrit par bloc) au lieu d'une
+    # ouverture/écriture par ligne — divise l'I/O par ~num_domains.
+    for ((r=0; r<blocks; r++)); do
+        printf '%s\n' "${domains[@]}" >> "$output"
     done
+    if (( rem > 0 )); then
+        for ((i=0; i<rem; i++)); do
+            printf '%s\n' "${domains[i]}" >> "$output"
+        done
+    fi
     msg_ok "Queryfile généré: ${num} requêtes, ${num_domains} domaines uniques"
 }
 

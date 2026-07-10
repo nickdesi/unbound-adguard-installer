@@ -101,7 +101,7 @@ download_with_retry() {
     local download_success=false
 
     while (( retry_count < max_retries )); do
-        if curl -fsSL -o "$output" "$url"; then
+        if curl -fsSL --connect-timeout 15 --max-time 300 -o "$output" "$url"; then
             # Verify checksum if provided
             if [[ -n "$expected_checksum" ]]; then
                 local actual_checksum
@@ -143,7 +143,7 @@ fetch_json_api() {
     local result=""
 
     while (( retry_count < max_retries )); do
-        if result=$(curl -fsSL "$url" 2>/dev/null); then
+        if result=$(curl -fsSL --connect-timeout 15 --max-time 30 "$url" 2>/dev/null); then
             echo "$result"
             return 0
         fi
