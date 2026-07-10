@@ -335,25 +335,42 @@ auto_benchmark_upstream() {
         [dns0]="DNS0.eu"
     )
     msg_info "Benchmark des upstreams DoT (5 mesures par upstream)..."
+    # Probe tous les upstreams en parallèle (1 job par upstream) pour
+    # diviser le temps mural par ~7 au lieu de sonder séquentiellement.
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
     for name in "${!UPSTREAM_MAP[@]}"; do
         local ip="${UPSTREAM_MAP[$name]}"
-        local times=()
-        local ok=0
-        for sample in 1 2 3 4 5; do
-            local tstart elapsed
-            tstart=$(date +%s%N)
-            if dig @"$ip" google.com +short +tries=1 +timeout=2 &>/dev/null; then
-                elapsed=$(( ($(date +%s%N) - tstart) / 1000000 ))
-                times+=("$elapsed")
-                ((++ok))
+        (
+            local times=() ok=0 sample tstart elapsed
+            for sample in 1 2 3 4 5; do
+                tstart=$(date +%s%N)
+                if dig @"$ip" google.com +short +tries=1 +timeout=2 &>/dev/null; then
+                    elapsed=$(( ($(date +%s%N) - tstart) / 1000000 ))
+                    times+=("$elapsed")
+                    ((++ok))
+                fi
+            done
+            if (( ok > 0 )); then
+                printf '%s\n' "${times[*]}" > "${tmp_dir}/${name}.times"
+            else
+                printf 'fail\n' > "${tmp_dir}/${name}.times"
             fi
-        done
+        ) &
+    done
+    wait
 
-        if (( ok == 0 )); then
+    for name in "${!UPSTREAM_MAP[@]}"; do
+        local ip="${UPSTREAM_MAP[$name]}"
+        local res
+        res=$(< "${tmp_dir}/${name}.times" 2>/dev/null)
+        if [[ "$res" == "fail" || -z "$res" ]]; then
             msg_warn "  ${UPSTREAM_DISPLAY[$name]} (${ip}) → timeout"
             continue
         fi
 
+        local -a times=()
+        read -ra times <<< "$res"
         local sorted=()
         mapfile -t sorted < <(printf '%s\n' "${times[@]}" | sort -n)
         local count=${#sorted[@]}
@@ -368,6 +385,8 @@ auto_benchmark_upstream() {
         fi
         msg_ok "  ${UPSTREAM_DISPLAY[$name]} (${ip}) → avg ${avg}ms | p50 ${median}ms | p95 ${p95}ms"
     done
+    rm -rf "$tmp_dir"
+
     if [[ -n "$fastest" && "$best_ms" -lt 99999 ]]; then
         SELECTED_UPSTREAM="$fastest"
         msg_ok "Upstream sélectionné: ${UPSTREAM_DISPLAY[$fastest]} (p95 ${best_ms}ms)"
@@ -490,7 +509,7 @@ get_cgroup_cpu_limit() {
         fi
     fi
 
-    for cpuset in /sys/fs/cgroup/cpuset.cpus.effective /sys/fs/cgroup/cpuset/cpuset.cpus.effective /sys/fs/cgroup/cpuset/cpuset.cpus; do
+    for cpuset in /sys/fs/cgroup/cpuset.cpus.effective /sys/fs/cgroup/cpuset/cpuset.cpus; do
         [[ -r "$cpuset" ]] || continue
         count_cpuset_cpus "$(< "$cpuset")" && return 0
     done
@@ -1171,6 +1190,33 @@ prewarm_unbound_cache() {
     msg_ok "Cache préchauffé: ${warmed}/${#domains[@]} domaines résolus (${failed} échecs)"
 }
 
+# Re-applique tout le tuning sur une installation existante, sans
+# reinstaller les binaires. Utile après changement de RAM/CPU ou mise
+# à jour du script : rejoue sysctl, config Unbound, tmpfs, affinité CPU.
+retune_stack() {
+    INTERACTIVE=false
+    if ! systemctl is-active --quiet unbound 2>/dev/null \
+        && [[ ! -f "$UNBOUND_CONF_NEW" ]] \
+        && [[ ! -f "$AGH_YAML" ]]; then
+        msg_error "Aucune installation détectée (Unbound/AdGuard). Lancez --install d'abord."
+        return 1
+    fi
+    header_info
+    STEP_TOTAL=5; STEP_CURRENT=0
+    msg_step "Re-application des optimisations sysctl"
+    apply_sysctl_tuning
+    msg_step "Recalcul et écriture de la configuration Unbound"
+    install_unbound
+    msg_step "Tmpfs cache Unbound"
+    setup_unbound_tmpfs
+    msg_step "Affinité CPU / tuning systemd"
+    setup_unbound_systemd_tuning
+    msg_step "Préchauffage du cache DNS"
+    prewarm_unbound_cache
+    STEP_TOTAL=0; STEP_CURRENT=0
+    msg_ok "Tuning de la stack ré-appliqué avec succès !"
+}
+
 
 
 # --- AdGuard Home Logic ---
@@ -1570,7 +1616,7 @@ show_menu() {
             --title " AdGuard Home + Unbound  v${SCRIPT_VERSION} " \
             --cancel-button "Quitter" \
             --ok-button "Choisir" \
-            --menu "${status_line}\n\nSelectionnez une action :" 26 76 11 \
+            --menu "${status_line}\n\nSelectionnez une action :" 27 76 12 \
             "1" "  ${label_install}" \
             "2" "  Reparer / Reconfigurer   Unbound + AdGuard upstream" \
             "3" "  Diagnostics              Health check complet + benchmark" \
@@ -1582,7 +1628,8 @@ show_menu() {
             "9" "  Desinstaller             Supprimer AdGuard Home + Unbound" \
             "10" "  Auto-Upstream            Benchmark DoT + selection auto" \
             "11" "  Benchmark DNS (dnsperf)  Benchmark réaliste avec dnsperf" \
-            "12" " Quitter") || exit 0
+            "12" "  Re-appliquer tuning     Re-configurer sysctl+Unbound (installe)" \
+            "13" " Quitter") || exit 0
 
         case $choice in
                 1)
@@ -1691,7 +1738,13 @@ show_menu() {
                         --msgbox "lib/health_checks.sh ou dnsperf non disponible.\nAssurez-vous de cloner le dépôt complet." 9 58
                 fi
                 ;;
-             12) exit 0 ;;
+             12)
+                if retune_stack; then
+                    whiptail --title " Tuning re-applique " \
+                        --msgbox "Le tuning complet (sysctl, Unbound, tmpfs, affinite CPU) a ete re-applique sur l'installation existante." 10 60
+                fi
+                ;;
+             13) exit 0 ;;
         esac
     done
 }
@@ -1704,6 +1757,7 @@ show_help() {
     echo -e "${GN}Options:${CL}"
     echo -e "  ${YW}--install${CL}            Installation complète (AdGuard Home + Unbound)"
     echo -e "  ${YW}--repair${CL}             Reconfigurer Unbound + AdGuard (sans réinstaller)"
+    echo -e "  ${YW}--retune${CL}             Re-appliquer tout le tuning sur une install existante"
     echo -e "  ${YW}--unbound-only${CL}       Installer/reconfigurer uniquement Unbound"
     echo -e "  ${YW}--update-unbound${CL}     Mettre à jour Unbound via apt (version distro)"
     echo -e "  ${YW}--update${CL}             Mettre à jour ce script depuis GitHub"
@@ -1819,7 +1873,7 @@ main() {
                 command="--benchmark-dnsperf"
                 shift
                 ;;
-            --install|--repair|--unbound-only|--health|--stats|--update|--uninstall|--update-unbound)
+            --install|--repair|--unbound-only|--health|--stats|--update|--uninstall|--update-unbound|--retune)
                 [[ -z "$command" ]] || { msg_error "Plusieurs commandes détectées"; exit 1; }
                 command="$1"
                 shift
@@ -1865,6 +1919,9 @@ main() {
             install_unbound
             configure_adguard_upstream
             msg_ok "Unbound reconfiguré !"
+            ;;
+        --retune)
+            retune_stack
             ;;
         --health)
             header_info
