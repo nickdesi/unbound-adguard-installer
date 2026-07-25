@@ -16,3 +16,6 @@ __pycache__/
 data/
 .opencode/
 graphify-out/
+
+# Local Agent Customizations
+.agents/
