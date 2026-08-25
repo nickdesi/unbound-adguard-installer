@@ -225,7 +225,7 @@ check_adguard_health() {
     msg_info "Vérification santé AdGuard Home..."
 
     # 1. Service status
-    if ! rc-service AdGuardHome status &>/dev/null; then
+    if ! rc-service AdGuardHome status &>/dev/null && ! pgrep -x AdGuardHome &>/dev/null; then
         msg_error "Service AdGuard Home non actif"
         ((++errors))
     else
@@ -424,7 +424,8 @@ run_full_health_check() {
     echo ""
 
     # Unbound
-    check_unbound_health; local ub_rc=$?
+    local ub_rc=0
+    check_unbound_health || ub_rc=$?
     if (( ub_rc != 0 )); then
         total_errors=$((total_errors + ub_rc))
     fi
@@ -432,7 +433,8 @@ run_full_health_check() {
     echo ""
 
     # AdGuard Home
-    check_adguard_health; local agh_rc=$?
+    local agh_rc=0
+    check_adguard_health || agh_rc=$?
     if (( agh_rc != 0 )); then
         total_errors=$((total_errors + agh_rc))
     fi

@@ -361,14 +361,22 @@ restart_service_safely() {
 
     msg_info "Redémarrage de $service..."
 
+    # In OpenRC, restart fails if service is stopped. Try restart, fallback to start.
     if ! rc-service "$service" restart &>/dev/null; then
-        msg_error "Échec du redémarrage de $service"
-        return 1
+        if ! rc-service "$service" start &>/dev/null; then
+            if [[ "$service" == "AdGuardHome" && -x "/opt/AdGuardHome/AdGuardHome" ]]; then
+                /opt/AdGuardHome/AdGuardHome -s restart &>/dev/null || /opt/AdGuardHome/AdGuardHome -s start &>/dev/null || true
+            fi
+        fi
     fi
 
-    # Poll loop with rc-service status
+    # Poll loop with rc-service status and process check
     while (( elapsed < timeout )); do
         if rc-service "$service" status &>/dev/null; then
+            msg_ok "Service $service actif"
+            return 0
+        fi
+        if [[ "$service" == "AdGuardHome" ]] && pgrep -x AdGuardHome &>/dev/null; then
             msg_ok "Service $service actif"
             return 0
         fi
