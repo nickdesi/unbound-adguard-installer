@@ -90,9 +90,31 @@ get_adguard_web_port() {
         return 0
     fi
 
+    if [[ -f "$yaml" ]] && command -v python3 &>/dev/null; then
+        port=$(python3 -c "
+import yaml
+try:
+    with open('$yaml') as f:
+        d = yaml.safe_load(f) or {}
+    addr = d.get('http', {}).get('address', '')
+    if ':' in str(addr):
+        print(str(addr).split(':')[-1])
+    elif addr:
+        print(addr)
+    elif 'bind_port' in d:
+        print(d['bind_port'])
+except Exception:
+    pass
+" 2>/dev/null)
+    fi
+
+    if [[ "$port" =~ ^[0-9]+$ ]]; then
+        echo "$port"
+        return 0
+    fi
+
     if [[ -f "$yaml" ]]; then
         port=$(awk '
-            /^[[:space:]]*bind_port:[[:space:]]*[0-9]+/ { print $2; exit }
             /^[[:space:]]*address:[[:space:]]*/ {
                 line = $0
                 sub(/^[^:]+:[[:space:]]*/, "", line)
@@ -100,25 +122,40 @@ get_adguard_web_port() {
                 if (line ~ /:[0-9]+$/) { sub(/^.*:/, "", line); print line; exit }
                 if (line ~ /^[0-9]+$/) { print line; exit }
             }
+            /^[[:space:]]*bind_port:[[:space:]]*[0-9]+/ { print $2; exit }
         ' "$yaml" 2>/dev/null)
     fi
 
-    if [[ "$port" =~ ^[0-9]+$ ]]; then
-        echo "$port"
-    else
-        echo "3000"
-    fi
+    echo "${port:-3000}"
 }
 
 is_port_listening() {
     local port="$1"
-    ss -H -tuln 2>/dev/null | awk -v port=":${port}" '$5 ~ port "$" { found = 1 } END { exit !found }'
+    if command -v ss &>/dev/null; then
+        if ss -tuln 2>/dev/null | grep -qE "(:|[[:space:]])${port}([[:space:]]|$)"; then
+            return 0
+        fi
+    fi
+    if command -v netstat &>/dev/null; then
+        if netstat -tuln 2>/dev/null | grep -qE "(:|[[:space:]])${port}([[:space:]]|$)"; then
+            return 0
+        fi
+    fi
+    return 1
 }
 
 is_adguard_web_reachable() {
     local port="$1"
-    curl -kfsSL --max-time 5 "http://127.0.0.1:${port}" &>/dev/null \
-        || curl -kfsSL --max-time 5 "https://127.0.0.1:${port}" &>/dev/null
+    local code
+    code=$(curl -k -s -o /dev/null -w "%{http_code}" --connect-timeout 3 --max-time 5 "http://127.0.0.1:${port}/" 2>/dev/null)
+    if [[ "$code" =~ ^[234] ]]; then
+        return 0
+    fi
+    code=$(curl -k -s -o /dev/null -w "%{http_code}" --connect-timeout 3 --max-time 5 "https://127.0.0.1:${port}/" 2>/dev/null)
+    if [[ "$code" =~ ^[234] ]]; then
+        return 0
+    fi
+    return 1
 }
 
 # Comprehensive Unbound health check
@@ -141,12 +178,8 @@ check_unbound_health() {
     local checkconf_ok=false
     if checkconf_output=$(unbound-checkconf 2>&1); then
         checkconf_ok=true
-    elif grep -qiE 'trust anchor|auto-trust-anchor|root\.key' <<< "$checkconf_output" && command -v repair_unbound_trust_anchor &>/dev/null; then
-        msg_warn "Trust anchor DNSSEC corrompue, tentative de réparation..."
-        repair_unbound_trust_anchor || true
-        if checkconf_output=$(unbound-checkconf 2>&1); then
-            checkconf_ok=true
-        fi
+    elif checkconf_output=$(unbound-checkconf /etc/unbound/unbound.conf 2>&1); then
+        checkconf_ok=true
     fi
 
     if [[ "$checkconf_ok" != "true" ]]; then
@@ -158,7 +191,7 @@ check_unbound_health() {
     fi
 
     # 3. Port listening
-    if ! ss -tulnp | grep -q ":${UNBOUND_PORT:-5335}\s.*unbound"; then
+    if ! is_port_listening "${UNBOUND_PORT:-5335}"; then
         msg_error "Unbound n'écoute pas sur le port ${UNBOUND_PORT:-5335}"
         ((++errors))
     else
