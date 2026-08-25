@@ -1297,20 +1297,12 @@ install_adguard_home() {
     rc-update add AdGuardHome default &>/dev/null || true
     rc-service AdGuardHome start &>/dev/null || "$AGH_BINARY" -s start &>/dev/null || true
 
-    msg_info "Attente initialisation AdGuard Home..."
-    if wait_for_file "$AGH_YAML" 30; then
+    local local_ip; local_ip=$(get_local_ip)
+    if [[ -f "$AGH_YAML" ]]; then
         configure_adguard_upstream
         msg_ok "AdGuard Home v${LATEST_VER} installé et lié à Unbound"
-        if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]]; then
-            msg_info "Health check post-installation..."
-            if check_adguard_health &>/dev/null; then
-                msg_ok "Health check: OK"
-            else
-                msg_warn "Health check: voir logs"
-            fi
-        fi
     else
-        msg_warn "Fichier YAML non trouvé, configuration manuelle requise"
+        msg_ok "AdGuard Home v${LATEST_VER} démarré (assistant web : http://${local_ip}:3000)"
     fi
 }
 
@@ -1565,9 +1557,13 @@ show_menu() {
     while true; do
         header_info
 
-        local ub_status agh_status
-        ub_status=$(rc-service unbound status 2>/dev/null | grep -qi "started\|running" && echo "active" || echo "inactif")
-        agh_status=$(rc-service AdGuardHome status 2>/dev/null | grep -qi "started\|running" && echo "active" || echo "inactif")
+        local ub_status="inactif" agh_status="inactif"
+        if rc-service unbound status &>/dev/null || pgrep -x unbound &>/dev/null; then
+            ub_status="active"
+        fi
+        if rc-service AdGuardHome status &>/dev/null || pgrep -x AdGuardHome &>/dev/null; then
+            agh_status="active"
+        fi
 
         local ub_dot agh_dot
         [[ "$ub_status"  == "active" ]] && ub_dot="[+]" || ub_dot="[ ]"
@@ -1613,17 +1609,17 @@ show_menu() {
                     msg_step "Installation AdGuard Home"
                     wait 2>/dev/null || true
                     install_adguard_home
-                msg_step "Health check post-installation"
+                msg_step "Finalisation de l'installation"
                 local local_ip; local_ip=$(get_local_ip)
                 local agh_port="3000"
                 type get_adguard_web_port &>/dev/null && agh_port=$(get_adguard_web_port)
                 STEP_TOTAL=0; STEP_CURRENT=0
-                if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]] && run_full_health_check &>/dev/null; then
+                if [[ -f "$AGH_YAML" ]] && grep -q "127.0.0.1:${UNBOUND_PORT}" "$AGH_YAML" 2>/dev/null; then
                     whiptail --title " Installation reussie " \
                         --msgbox "Tous les services sont actifs et verifies.\n\n  Upstream DNS : ${SELECTED_UPSTREAM}\n  AdGuard Home : http://${local_ip}:${agh_port}\n  Unbound      : port ${UNBOUND_PORT} (DoT)\n\nConsultez les logs : ${LOG_FILE}" 14 62
                 else
-                    whiptail --title " Installation terminee " \
-                        --msgbox "Installation terminee (health check non concluant).\n\n  AdGuard Home : http://${local_ip}:${agh_port}\n  Upstream DNS : ${SELECTED_UPSTREAM}\n\nConsultez les logs : ${LOG_FILE}" 13 62
+                    whiptail --title " Finalisation requise " \
+                        --msgbox "AdGuard Home et Unbound sont installes et demarres !\n\n1. Ouvrez dans votre navigateur :\n   http://${local_ip}:3000\n   pour completer l'assistant initial AdGuard Home.\n\n2. Une fois l'assistant termine, relancez l'option 2 (Reparer / Reconfigurer) pour lier automatiquement AdGuard Home a Unbound (127.0.0.1:${UNBOUND_PORT}).\n\nConsultez les logs : ${LOG_FILE}" 17 68
                 fi
                 ;;
             2)

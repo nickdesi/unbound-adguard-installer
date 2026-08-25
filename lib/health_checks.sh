@@ -68,7 +68,10 @@ test_dot_connectivity() {
     msg_info "Test connectivité DoT (DNS-over-TLS)..."
 
     # Test connection to Cloudflare DoT
-    if timeout 5 openssl s_client -connect 1.1.1.1:853 </dev/null 2>&1 | grep -q "CONNECTED"; then
+    if echo | openssl s_client -connect 1.1.1.1:853 2>/dev/null | grep -q "CONNECTED"; then
+        msg_ok "Connectivité DoT fonctionnelle"
+        return 0
+    elif timeout 5 openssl s_client -connect 1.1.1.1:853 </dev/null 2>&1 | grep -q "CONNECTED"; then
         msg_ok "Connectivité DoT fonctionnelle"
         return 0
     else
