@@ -134,13 +134,18 @@ except Exception:
 
 is_port_listening() {
     local port="$1"
+    if command -v netstat &>/dev/null; then
+        if netstat -tuln 2>/dev/null | grep -qE "(:|[[:space:]])${port}([[:space:]]|$)"; then
+            return 0
+        fi
+    fi
     if command -v ss &>/dev/null; then
         if ss -tuln 2>/dev/null | grep -qE "(:|[[:space:]])${port}([[:space:]]|$)"; then
             return 0
         fi
     fi
-    if command -v netstat &>/dev/null; then
-        if netstat -tuln 2>/dev/null | grep -qE "(:|[[:space:]])${port}([[:space:]]|$)"; then
+    if command -v nc &>/dev/null; then
+        if nc -z 127.0.0.1 "$port" &>/dev/null; then
             return 0
         fi
     fi
@@ -169,7 +174,7 @@ check_unbound_health() {
     msg_info "Vérification santé Unbound..."
 
     # 1. Service status
-    if ! rc-service unbound status &>/dev/null; then
+    if ! rc-service unbound status &>/dev/null && ! pgrep -f "unbound" &>/dev/null; then
         msg_error "Service Unbound non actif"
         ((++errors))
     else
@@ -228,7 +233,14 @@ check_adguard_health() {
     msg_info "Vérification santé AdGuard Home..."
 
     # 1. Service status
-    if ! rc-service AdGuardHome status &>/dev/null && ! pgrep -x AdGuardHome &>/dev/null; then
+    local service_active=false
+    if rc-service AdGuardHome status &>/dev/null \
+        || rc-service adguardhome status &>/dev/null \
+        || pgrep -f "AdGuardHome" &>/dev/null; then
+        service_active=true
+    fi
+
+    if [[ "$service_active" != "true" ]]; then
         msg_error "Service AdGuard Home non actif"
         ((++errors))
     else
@@ -241,6 +253,15 @@ check_adguard_health() {
         ((++errors))
     else
         msg_ok "Fichier de configuration AdGuard présent"
+    fi
+
+    # Detect actual active web port (80 or 3000 or config value)
+    if ! is_port_listening "$agh_port"; then
+        if is_port_listening 80; then
+            agh_port=80
+        elif is_port_listening 3000; then
+            agh_port=3000
+        fi
     fi
 
     # 3. Web port listening
