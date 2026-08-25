@@ -1289,6 +1289,7 @@ install_adguard_home() {
 
     tar -xzf /tmp/agh_install/AGH.tar.gz -C /tmp/agh_install
     mkdir -p "$AGH_INSTALL_DIR"
+    chmod 700 "$AGH_INSTALL_DIR"
     mv /tmp/agh_install/AdGuardHome/AdGuardHome "$AGH_BINARY"
     chmod +x "$AGH_BINARY"
 
