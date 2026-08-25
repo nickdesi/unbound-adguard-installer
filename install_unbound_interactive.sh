@@ -1196,14 +1196,7 @@ retune_stack() {
 configure_adguard_upstream() {
     [[ ! -f "$AGH_YAML" ]] && return 0
 
-    msg_info "Vérification de la configuration AdGuard Home..."
-
-    if grep -q "127.0.0.1:${UNBOUND_PORT}" "$AGH_YAML"; then
-        msg_ok "AdGuard Home utilise déjà Unbound (idempotent)"
-        return 0
-    fi
-
-    msg_info "Configuration d'AdGuard Home pour utiliser Unbound"
+    msg_info "Configuration d'AdGuard Home pour utiliser Unbound..."
 
     create_backup "$AGH_YAML" || true
 
