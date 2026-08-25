@@ -1222,9 +1222,10 @@ try:
     config['dns']['upstream_dns']  = ['127.0.0.1:${UNBOUND_PORT}']
     config['dns']['bootstrap_dns'] = ['1.1.1.1']
     config['dns']['enable_dnssec'] = False  # Unbound already validates DNSSEC
-    config['dns']['cache_size'] = 0  # Unbound handles caching
-    config['dns']['disable_ipv6'] = True
-    config['dns']['ratelimit'] = 0  # Disable rate-limiting for local performance
+    config['dns']['cache_enabled'] = False  # Unbound handles DNS caching
+    config['dns']['cache_size']    = 4096   # Keep positive to satisfy AGH validation
+    config['dns']['disable_ipv6']  = True
+    config['dns']['ratelimit']     = 0      # Disable rate-limiting for local performance
 
     with open("$AGH_YAML", 'w') as f:
         yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
