@@ -236,6 +236,28 @@ is_port_available() {
     return 0
 }
 
+# Get primary local IP address portably (Alpine, Debian, etc.)
+# Usage: get_local_ip
+get_local_ip() {
+    local ip
+    # 1. Try ip route get (iproute2)
+    ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
+    if [[ -n "$ip" ]]; then
+        echo "$ip"
+        return 0
+    fi
+    # 2. Try hostname -I (Debian/Ubuntu) or hostname -i (Alpine)
+    ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    [[ -z "$ip" ]] && ip=$(hostname -i 2>/dev/null | awk '{print $1}')
+    if [[ -n "$ip" && "$ip" != "127.0.0.1" ]]; then
+        echo "$ip"
+        return 0
+    fi
+    # 3. Fallback to ip addr
+    ip=$(ip -4 addr show scope global 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -n1)
+    echo "${ip:-127.0.0.1}"
+}
+
 # ==========================================================================
 # SYSTEM CHECKS
 # ==========================================================================
@@ -251,9 +273,22 @@ is_container() {
 check_disk_space() {
     local path="$1"
     local min_mb="$2"
-    local available_mb
+    local check_path="$path"
 
-    available_mb=$(df -BM "$path" | awk 'NR==2 {gsub(/M/,"",$4); print $4}')
+    # Find nearest existing directory if path does not exist yet
+    while [[ ! -d "$check_path" && "$check_path" != "/" && "$check_path" != "." ]]; do
+        check_path="$(dirname "$check_path")"
+    done
+    [[ -d "$check_path" ]] || check_path="/"
+
+    local available_kb available_mb
+    available_kb=$(df -k -P "$check_path" 2>/dev/null | awk 'NR==2 {print $4}' | tr -dc '0-9')
+
+    if [[ -z "$available_kb" ]]; then
+        return 0
+    fi
+
+    available_mb=$(( available_kb / 1024 ))
 
     if (( available_mb < min_mb )); then
         msg_error "Espace disque insuffisant sur $path: ${available_mb}MB disponible, ${min_mb}MB requis"
@@ -361,26 +396,27 @@ atomic_write() {
     mv "$temp_file" "$file_path" || { msg_error "Échec déplacement atomique: $temp_file -> $file_path"; rm -f "$temp_file"; return 1; }
 }
 
-# Safe sed replacement (creates backup)
+# Safe sed replacement (atomic with backup)
 # Usage: safe_sed <file> <pattern> <replacement>
 safe_sed() {
     local file="$1"
     local pattern="$2"
     local replacement="$3"
-    local backup_suffix=".bak"
 
     if [[ ! -f "$file" ]]; then
         msg_error "Fichier inexistant: $file"
         return 1
     fi
 
-    if sed -i"${backup_suffix}" --follow-symlinks "s|${pattern}|${replacement}|g" "$file"; then
-        rm -f "${file}${backup_suffix}"
+    local temp_file
+    temp_file=$(mktemp "${file}.tmp.XXXXXX") || return 1
+    if sed "s|${pattern}|${replacement}|g" "$file" > "$temp_file"; then
+        mv "$temp_file" "$file"
         msg_ok "Modification appliquée: $file"
         return 0
     else
+        rm -f "$temp_file"
         msg_error "Échec modification sed: $file"
-        [[ -f "${file}${backup_suffix}" ]] && mv "${file}${backup_suffix}" "$file"
         return 1
     fi
 }

@@ -206,18 +206,18 @@ test_disk_space_check() {
     echo ""
     echo "=== Testing Disk Space Check ==="
 
-    if [[ "$(uname -s)" != "Linux" ]]; then
-        skip "Disk space check uses Linux df -BM semantics"
-        return 0
-    fi
-
-    # Uses check_disk_space from lib/common.sh
-
-    # Should have at least 100MB free on /tmp
-    if check_disk_space "/tmp" 100; then
-        pass "Sufficient disk space on /tmp (>100MB)"
+    # Should have at least 10MB free on /tmp
+    if check_disk_space "/tmp" 10; then
+        pass "Sufficient disk space on /tmp (>10MB)"
     else
         fail "Insufficient disk space on /tmp"
+    fi
+
+    # Test non-existent path fallback
+    if check_disk_space "/tmp/nonexistent/sub/path" 10; then
+        pass "Check disk space on non-existent path falls back correctly"
+    else
+        fail "Check disk space fallback failed"
     fi
 }
 

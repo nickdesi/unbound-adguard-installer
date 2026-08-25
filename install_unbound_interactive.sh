@@ -90,8 +90,10 @@ RAM_MB=512
 ALLOW_PROXMOX_HOST=false
 
 # --- Version comparison helper ---
-# _version_ge <v1> <v2> → retourne 0 si v1 >= v2 (utilise sort -V)
-_version_ge() { printf '%s\n' "$2" "$1" | sort -V -C; }
+_version_ge() {
+    [[ "$1" == "$2" ]] && return 0
+    [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" == "$2" ]]
+}
 
 # --- Dry-run wrapper ---
 # Usage: run_cmd <cmd> [args...]
@@ -277,12 +279,15 @@ repair_unbound_trust_anchor() {
     fi
     rm -f "$UNBOUND_TRUST_ANCHOR"
 
-    if command -v unbound-anchor &>/dev/null && unbound-anchor -a "$UNBOUND_TRUST_ANCHOR" &>/dev/null; then
-        chown unbound:unbound "$UNBOUND_TRUST_ANCHOR" 2>/dev/null || true
-        chmod 644 "$UNBOUND_TRUST_ANCHOR" 2>/dev/null || true
-        msg_ok "Trust anchor DNSSEC régénérée"
-        rc-service unbound restart &>/dev/null || true
-        return 0
+    if command -v unbound-anchor &>/dev/null; then
+        unbound-anchor -a "$UNBOUND_TRUST_ANCHOR" &>/dev/null || true
+        if [[ -s "$UNBOUND_TRUST_ANCHOR" ]]; then
+            chown unbound:unbound "$UNBOUND_TRUST_ANCHOR" 2>/dev/null || true
+            chmod 644 "$UNBOUND_TRUST_ANCHOR" 2>/dev/null || true
+            msg_ok "Trust anchor DNSSEC régénérée"
+            rc-service unbound restart &>/dev/null || true
+            return 0
+        fi
     fi
 
     if [[ -s /usr/share/dns/root.key ]]; then
@@ -1608,7 +1613,7 @@ show_menu() {
                     wait 2>/dev/null || true
                     install_adguard_home
                 msg_step "Health check post-installation"
-                local local_ip; local_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+                local local_ip; local_ip=$(get_local_ip)
                 local agh_port="3000"
                 type get_adguard_web_port &>/dev/null && agh_port=$(get_adguard_web_port)
                 STEP_TOTAL=0; STEP_CURRENT=0
