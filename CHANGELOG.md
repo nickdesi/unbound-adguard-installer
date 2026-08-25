@@ -5,11 +5,21 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/),
 et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
-## [Non publié]
+## [4.0.0] - 2026-08-25
 
-### En cours
-- Amélioration continue de la suite de tests
-- Documentation exemples d'utilisation avancée
+### Ajouté
+- **Migration complète vers Alpine Linux** (OpenRC + apk) : consommation RAM divisée par 3 (< 60 Mo en production), empreinte disque < 50 Mo.
+- **Bootstrap POSIX `/bin/sh`** (`setup.sh`) avec auto-installation des dépendances initiales (`bash`, `curl`, `tar`, `jq`, `coreutils`) sur conteneur Alpine minimal.
+- **Gestionnaire de services OpenRC** : support natif de `rc-service` et `rc-update` pour Unbound et AdGuard Home.
+- **Tuning OpenRC & limites ressources** : configuration automatique de `/etc/conf.d/unbound` (`rc_ulimit`, `rc_nice`) et `/etc/security/limits.d/99-unbound.conf`.
+- **Persistance du cache Unbound via cron périodique** : intégration dans `/etc/periodic/hourly/unbound-cache-persist`.
+
+### Modifié
+- Version du script : 3.5.0 → 4.0.0
+- Remplacement d'`apt-get`/`dpkg` par `apk` (`apk add --no-cache`, `apk info -e`).
+- Mapping des paquets pour Alpine (`bind-tools`, `newt`, `py3-yaml`, `iproute2`, `apache2-utils`).
+- Suppression de la gestion de `systemd-resolved` (inutile sur Alpine Linux).
+- Mise à jour de la documentation et de la suite de tests pour Alpine.
 
 ## [3.4.2] - 2026-05-16
 

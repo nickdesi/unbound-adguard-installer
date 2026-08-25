@@ -7,7 +7,7 @@ Merci de votre intérêt pour améliorer ce projet ! Ce guide vous aidera à con
 ## 📋 Prérequis
 
 - Bash 4.0+ (vérifiez avec `bash --version`)
-- Shellcheck installé pour le linting (`apt-get install shellcheck`)
+- Shellcheck installé pour le linting (`apk add shellcheck` ou `apt-get install shellcheck`)
 - Accès à un environnement Proxmox VE (pour les tests)
 - Connaissance des bonnes pratiques bash
 

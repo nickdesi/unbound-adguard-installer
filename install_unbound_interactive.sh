@@ -5,10 +5,10 @@
 # AdGuard Home & Unbound All-in-One Installer/Updater pour Proxmox LXC
 # ==========================================================================
 # Script inspiré du style "Proxmox VE Helper-Scripts" (tteck/community-scripts)
-# Installe, configure et met à jour AdGuard Home + Unbound sur Debian/Ubuntu LXC.
+# Installe, configure et met à jour AdGuard Home + Unbound sur Alpine Linux LXC.
 # ==========================================================================
 # Auteur: Nicolas
-# Version: 3.4.2
+# Version: 4.0.0
 # Licence: MIT
 # ==========================================================================
 
@@ -66,17 +66,17 @@ if [[ -f "${SCRIPT_DIR}/lib/health_checks.sh" ]]; then
 fi
 
 # --- Global Constants ---
-readonly SCRIPT_VERSION="3.5.0"
+readonly SCRIPT_VERSION="4.0.0"
 readonly UNBOUND_PORT=5335
 readonly AGH_INSTALL_DIR="/opt/AdGuardHome"
 readonly AGH_BINARY="${AGH_INSTALL_DIR}/AdGuardHome"
 readonly AGH_YAML="${AGH_INSTALL_DIR}/AdGuardHome.yaml"
 readonly VALID_UPSTREAMS=("cloudflare" "quad9" "google" "adguard")
-readonly ROOT_HINTS_FILE="/usr/share/dns/root.hints"
+readonly ROOT_HINTS_FILE="/etc/unbound/root.hints"
 readonly ROOT_HINTS_MAX_AGE_DAYS=30
 readonly UNBOUND_CONF="/etc/unbound/unbound.conf"
 readonly UNBOUND_CONF_NEW="/etc/unbound/unbound.conf.d/99-adguard-unbound-installer.conf"
-readonly UNBOUND_TRUST_ANCHOR="/var/lib/unbound/root.key"
+readonly UNBOUND_TRUST_ANCHOR="/etc/unbound/root.key"
 readonly DEFAULT_BENCHMARK_QUERIES=300
 readonly UPDATE_REPO="nickdesi/unbound-adguard-installer"
 readonly UPDATE_REF="main"
@@ -161,8 +161,8 @@ check_os() {
     if [[ -f /etc/os-release ]]; then
         # shellcheck disable=SC1091
         . /etc/os-release
-        if [[ "$ID" != "debian" && "$ID" != "ubuntu" ]]; then
-            msg_error "OS non supporté: $ID (Debian/Ubuntu requis)"
+        if [[ "$ID" != "alpine" ]]; then
+            msg_error "OS non supporté: $ID (Alpine Linux requis)"
             exit 1
         fi
     else
@@ -177,13 +177,13 @@ is_proxmox_host() {
 
 is_lxc_container() {
     grep -qaE 'lxc|liblxc' /proc/1/environ /proc/1/cgroup 2>/dev/null \
-        || systemd-detect-virt --container 2>/dev/null | grep -q '^lxc$' \
-        || [[ -f /run/systemd/container && "$(cat /run/systemd/container 2>/dev/null)" == "lxc" ]]
+        || grep -qa 'container=lxc' /proc/1/environ 2>/dev/null \
+        || [[ -f /etc/alpine-release && -d /sys/fs/cgroup ]]
 }
 
 check_proxmox_target() {
     if is_proxmox_host && [[ "$ALLOW_PROXMOX_HOST" != "true" ]]; then
-        msg_error "Hôte Proxmox détecté. Installez ce service dans un conteneur LXC Debian/Ubuntu, pas sur le nœud PVE."
+        msg_error "Hôte Proxmox détecté. Installez ce service dans un conteneur LXC Alpine, pas sur le nœud PVE."
         msg_error "Contournement non recommandé: --allow-proxmox-host"
         exit 1
     fi
@@ -191,7 +191,7 @@ check_proxmox_target() {
     if is_lxc_container; then
         msg_ok "Environnement LXC détecté"
     else
-        msg_warn "Aucun conteneur LXC détecté — script optimisé pour Proxmox LXC Debian/Ubuntu."
+        msg_warn "Aucun conteneur LXC détecté — script optimisé pour Proxmox LXC Alpine Linux."
     fi
 }
 
@@ -199,8 +199,8 @@ check_dependencies() {
     local missing_cmds=() missing_pkgs=()
     local dep cmd pkg
     local deps=(
-        "curl:curl" "wget:wget" "tar:tar" "jq:jq" "whiptail:whiptail"
-        "openssl:openssl" "ss:iproute2" "awk:mawk" "sed:sed" "grep:grep"
+        "curl:curl" "wget:wget" "tar:tar" "jq:jq" "whiptail:newt"
+        "openssl:openssl" "ss:iproute2" "awk:gawk" "sed:sed" "grep:grep"
     )
 
     for dep in "${deps[@]}"; do
@@ -208,26 +208,24 @@ check_dependencies() {
         pkg="${dep#*:}"
         command -v "$cmd" &>/dev/null || { missing_cmds+=("$cmd"); missing_pkgs+=("$pkg"); }
     done
-    command -v dig &>/dev/null || { missing_cmds+=("dig"); missing_pkgs+=("bind9-dnsutils"); }
+    command -v dig &>/dev/null || { missing_cmds+=("dig"); missing_pkgs+=("bind-tools"); }
     if ! command -v python3 &>/dev/null; then
-        missing_cmds+=("python3" "python3-yaml")
-        missing_pkgs+=("python3" "python3-yaml")
+        missing_cmds+=("python3" "py3-yaml")
+        missing_pkgs+=("python3" "py3-yaml")
     elif ! python3 -c "import yaml" &>/dev/null 2>&1; then
-        missing_cmds+=("python3-yaml")
-        missing_pkgs+=("python3-yaml")
+        missing_cmds+=("py3-yaml")
+        missing_pkgs+=("py3-yaml")
     fi
 
     if [[ ${#missing_pkgs[@]} -gt 0 ]]; then
         msg_info "Installation des dépendances manquantes: ${missing_cmds[*]}"
         if [[ "$DRY_RUN" == "true" ]]; then
-            echo "  [DRY-RUN] apt-get install -y --no-install-recommends ${missing_pkgs[*]}"
+            echo "  [DRY-RUN] apk add --no-cache ${missing_pkgs[*]}"
             msg_ok "Dépendances simulées"
             return 0
         fi
-        local cache_age
-        cache_age=$(stat -c %Y /var/lib/apt/lists 2>/dev/null || echo 0)
-        (( $(date +%s) - cache_age > 3600 )) && apt-get update -qq &>/dev/null
-        apt-get install -y --no-install-recommends "${missing_pkgs[@]}" &>/dev/null
+        apk update -q &>/dev/null || true
+        apk add --no-cache "${missing_pkgs[@]}" &>/dev/null
         msg_ok "Dépendances installées"
     fi
 }
@@ -283,7 +281,7 @@ repair_unbound_trust_anchor() {
         chown unbound:unbound "$UNBOUND_TRUST_ANCHOR" 2>/dev/null || true
         chmod 644 "$UNBOUND_TRUST_ANCHOR" 2>/dev/null || true
         msg_ok "Trust anchor DNSSEC régénérée"
-        systemctl restart unbound &>/dev/null || true
+        rc-service unbound restart &>/dev/null || true
         return 0
     fi
 
@@ -292,7 +290,7 @@ repair_unbound_trust_anchor() {
         chown unbound:unbound "$UNBOUND_TRUST_ANCHOR" 2>/dev/null || true
         chmod 644 "$UNBOUND_TRUST_ANCHOR" 2>/dev/null || true
         msg_ok "Trust anchor DNSSEC restaurée depuis /usr/share/dns/root.key"
-        systemctl restart unbound &>/dev/null || true
+        rc-service unbound restart &>/dev/null || true
         return 0
     fi
 
@@ -738,9 +736,9 @@ calculate_optimized_settings() {
     VAL_BOGUS_TTL=60
 }
 
-# --- Cache Unbound en tmpfs (expérimental) ---
+# --- Cache Unbound en tmpfs ---
 # Monte /var/lib/unbound en tmpfs pour éviter I/O disque sur le cache dump.
-# Persiste le dump sur disque au stop, recharge au start via systemd.
+# Persiste le dump sur disque et recharge au démarrage via cron périodique.
 setup_unbound_tmpfs() {
     local min_ram=1024
     local tmpfs_size
@@ -791,27 +789,14 @@ setup_unbound_tmpfs() {
         msg_ok "Entrée fstab ajoutée pour /var/lib/unbound"
     fi
 
-    # Renforce la persistance systemd : dump → disque avant arrêt
-    mkdir -p /etc/systemd/system/unbound.service.d
-    cat > /etc/systemd/system/unbound.service.d/cache-persist.conf <<'CACHEEOF'
-[Service]
-# Charge le cache depuis le dump disque persistant (hors tmpfs)
-ExecStartPre=-/bin/sh -c 'if [ -f /var/lib/unbound/cache.dump.persist ]; then /usr/sbin/unbound-control -s 127.0.0.1@8953 load_cache < /var/lib/unbound/cache.dump.persist 2>/dev/null; elif [ -f /var/lib/unbound/cache.dump ]; then /usr/sbin/unbound-control -s 127.0.0.1@8953 load_cache < /var/lib/unbound/cache.dump 2>/dev/null; fi || true'
-# Dump le cache vers tmpfs, puis copie vers disque pour persistance
-ExecStop=-/bin/sh -c '/usr/sbin/unbound-control -s 127.0.0.1@8953 dump_cache > /var/lib/unbound/cache.dump 2>/dev/null; cp /var/lib/unbound/cache.dump /var/lib/unbound/cache.dump.persist 2>/dev/null || true'
-# Sur stop forcé, tente aussi la copie disque
-ExecStopPost=-/bin/sh -c '[ -f /var/lib/unbound/cache.dump ] && cp /var/lib/unbound/cache.dump /var/lib/unbound/cache.dump.persist 2>/dev/null || true'
-CACHEEOF
-    systemctl daemon-reload &>/dev/null
-    msg_ok "Persistance cache: dump → /var/lib/unbound/cache.dump.persist"
-
-    # Crée la tâche cron pour sauvegarder le cache sur le disque persistant toutes les heures
-    local cron_script="/etc/cron.hourly/unbound-cache-persist"
+    # Crée la tâche cron périodique Alpine (/etc/periodic/hourly)
+    mkdir -p /etc/periodic/hourly
+    local cron_script="/etc/periodic/hourly/unbound-cache-persist"
     local cron_content
     cron_content=$(cat <<'CRONEOF'
 #!/bin/sh
 # Sauvegarde périodique du cache Unbound (unbound-adguard-installer)
-if systemctl is-active --quiet unbound && command -v unbound-control >/dev/null; then
+if rc-service unbound status >/dev/null 2>&1 && command -v unbound-control >/dev/null; then
     /usr/sbin/unbound-control -s 127.0.0.1@8953 dump_cache > /var/lib/unbound/cache.dump 2>/dev/null && \
     cp /var/lib/unbound/cache.dump /var/lib/unbound/cache.dump.persist 2>/dev/null
 fi
@@ -819,62 +804,44 @@ CRONEOF
 )
     atomic_write "$cron_script" "$cron_content"
     chmod +x "$cron_script"
+    msg_ok "Persistance périodique du cache configurée"
 }
 
-# --- CPU Affinity & Systemd Tuning pour Unbound ---
-# Dans un LXC multi-cœur, on épingle les threads Unbound aux CPU
-# pour éviter les migrations de cache entre cœurs (cache miss).
-setup_unbound_systemd_tuning() {
+# --- OpenRC & Resource Limits Tuning pour Unbound sur Alpine ---
+setup_unbound_openrc_tuning() {
     get_system_resources
-    if (( CPU_CORES < 2 )); then
-        msg_info "CPU affinity désactivé (< 2 cœurs)"
-        return 0
-    fi
     if [[ "$DRY_RUN" == "true" ]]; then
-        echo "  [DRY-RUN] CPUAffinity=0-$((CPU_CORES-1)) + IOWeight=500 + OOMScoreAdjust=-500"
+        echo "  [DRY-RUN] OpenRC limits: rc_ulimit=\"-n 65536 -u 4096\" + rc_nice=5"
         return 0
     fi
 
-    mkdir -p /etc/systemd/system/unbound.service.d
-    cat > /etc/systemd/system/unbound.service.d/cpu-affinity.conf <<'CPUFEOF'
-[Service]
-# Épingle Unbound aux CPU disponibles (évite migrations cache)
-CPUAffinity=CPURANGE
-# Priorité IO élevée pour les accès cache disque (tmpfs)
-IOWeight=500
-# Protège Unbound du OOM killer
-OOMScoreAdjust=-500
-# CPU scheduling: idle poll évite les wakeups inutiles
-CPUSchedulingPolicy=idle
-Nice=5
-# Limite fichiers ouverts: outgoing-range × threads + marge
-LimitNOFILE=65536
-# Limite processus: threads + overhead système
-LimitNPROC=4096
-CPUFEOF
-    # Remplace le placeholder par la valeur réelle
-    local cpu_range="0-$((CPU_CORES-1))"
-    sed -i "s/CPURANGE/$cpu_range/" /etc/systemd/system/unbound.service.d/cpu-affinity.conf
-    systemctl daemon-reload &>/dev/null
-    msg_ok "CPU affinity: ${cpu_range}, IOWeight=500, OOMScoreAdjust=-500"
+    mkdir -p /etc/conf.d
+    cat > /etc/conf.d/unbound <<'EOF'
+# /etc/conf.d/unbound - Optimisations AdGuard Home + Unbound Installer
+# Limites fichiers ouverts et processus
+rc_ulimit="-n 65536 -u 4096"
+# Priorite du processus
+rc_nice="5"
+EOF
+
+    mkdir -p /etc/security/limits.d
+    cat > /etc/security/limits.d/99-unbound.conf <<'EOF'
+unbound soft nofile 65536
+unbound hard nofile 65536
+unbound soft nproc 4096
+unbound hard nproc 4096
+EOF
+
+    msg_ok "Tuning OpenRC: rc_ulimit=\"-n 65536 -u 4096\", nice=5"
 }
 
 install_unbound() {
-    if ! dpkg -l unbound 2>/dev/null | grep -q "^ii "; then
+    if ! apk info -e unbound &>/dev/null; then
         msg_info "Installation du paquet Unbound"
-        run_cmd apt-get install -y --no-install-recommends unbound ca-certificates dnsutils &>/dev/null
+        run_cmd apk add --no-cache unbound ca-certificates bind-tools &>/dev/null
         msg_ok "Unbound installé"
     else
         msg_ok "Paquet Unbound déjà présent"
-    fi
-
-    if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
-        if ss -tulnp | grep -E ':(53|5353)\s' | grep -q 'systemd-resolve'; then
-            msg_info "Désactivation de systemd-resolved (conflit port 53)"
-            run_cmd systemctl disable --now systemd-resolved.service &>/dev/null || true
-            run_cmd rm -f /etc/resolv.conf
-            msg_ok "systemd-resolved désactivé"
-        fi
     fi
 
     calculate_optimized_settings
@@ -1083,12 +1050,12 @@ EOF
     fi
 
     if [[ "$checkconf_ok" == "true" ]]; then
-        systemctl enable unbound &>/dev/null
+        rc-update add unbound default &>/dev/null || true
 
         # Montage tmpfs pour cache Unbound (si RAM suffisante)
         setup_unbound_tmpfs
-        # CPU affinity + systemd tuning (si multi-cœur)
-        setup_unbound_systemd_tuning
+        # Tuning OpenRC & limites ressources
+        setup_unbound_openrc_tuning
 
         restart_service_safely unbound 30 || { msg_error "Échec redémarrage sécurisé Unbound"; exit 1; }
         msg_ok "Configuration Unbound valide et service redémarré"
@@ -1143,8 +1110,8 @@ prewarm_unbound_cache() {
             stackoverflow.com cdn.sstatic.net
             npmjs.com registry.npmjs.org
             docker.com hub.docker.com
-            debian.org security.debian.org
-            ubuntu.com archive.ubuntu.com
+            alpinelinux.org dl-cdn.alpinelinux.org
+            debian.org ubuntu.com
         )
     fi
 
@@ -1195,7 +1162,7 @@ prewarm_unbound_cache() {
 # à jour du script : rejoue sysctl, config Unbound, tmpfs, affinité CPU.
 retune_stack() {
     INTERACTIVE=false
-    if ! systemctl is-active --quiet unbound 2>/dev/null \
+    if ! rc-service unbound status &>/dev/null \
         && [[ ! -f "$UNBOUND_CONF_NEW" ]] \
         && [[ ! -f "$AGH_YAML" ]]; then
         msg_error "Aucune installation détectée (Unbound/AdGuard). Lancez --install d'abord."
@@ -1209,8 +1176,8 @@ retune_stack() {
     install_unbound
     msg_step "Tmpfs cache Unbound"
     setup_unbound_tmpfs
-    msg_step "Affinité CPU / tuning systemd"
-    setup_unbound_systemd_tuning
+    msg_step "Tuning OpenRC & limites système"
+    setup_unbound_openrc_tuning
     msg_step "Préchauffage du cache DNS"
     prewarm_unbound_cache
     STEP_TOTAL=0; STEP_CURRENT=0
@@ -1321,7 +1288,8 @@ install_adguard_home() {
     chmod +x "$AGH_BINARY"
 
     "$AGH_BINARY" -s install &>/dev/null || true
-    systemctl start AdGuardHome
+    rc-update add AdGuardHome default &>/dev/null || true
+    rc-service AdGuardHome start &>/dev/null || "$AGH_BINARY" -s start &>/dev/null || true
 
     msg_info "Attente initialisation AdGuard Home..."
     if wait_for_file "$AGH_YAML" 30; then
@@ -1383,8 +1351,7 @@ reset_adguard_password() {
 
     if ! command -v htpasswd &>/dev/null; then
         msg_info "Installation de apache2-utils pour générer le hash bcrypt..."
-        apt-get update -qq &>/dev/null || true
-        apt-get install -y --no-install-recommends apache2-utils &>/dev/null
+        apk add --no-cache apache2-utils &>/dev/null || true
     fi
 
     command -v htpasswd &>/dev/null || { msg_error "htpasswd introuvable"; return 1; }
@@ -1439,19 +1406,21 @@ uninstall_all() {
     fi
 
     msg_info "Suppression AdGuard Home..."
-    systemctl stop AdGuardHome &>/dev/null || true
+    rc-service AdGuardHome stop &>/dev/null || true
+    rc-update del AdGuardHome default &>/dev/null || true
     if [[ -x "$AGH_BINARY" ]]; then
         "$AGH_BINARY" -s uninstall &>/dev/null || true
     fi
-    rm -rf "$AGH_INSTALL_DIR"
+    rm -rf "$AGH_INSTALL_DIR" /etc/init.d/AdGuardHome
     msg_ok "AdGuard Home supprimé"
 
     msg_info "Suppression Unbound..."
-    systemctl stop unbound &>/dev/null || true
-    apt-get remove --purge -y unbound &>/dev/null
+    rc-service unbound stop &>/dev/null || true
+    rc-update del unbound default &>/dev/null || true
+    apk del unbound &>/dev/null || true
     rm -rf /etc/unbound
-    rm -rf /etc/systemd/system/unbound.service.d
-    rm -f /etc/cron.hourly/unbound-cache-persist
+    rm -f /etc/conf.d/unbound /etc/security/limits.d/99-unbound.conf
+    rm -f /etc/periodic/hourly/unbound-cache-persist
     msg_ok "Unbound supprimé"
 
     msg_info "Nettoyage des optimisations système..."
@@ -1569,25 +1538,20 @@ update_unbound_daemon() {
     local current_ver
     current_ver="$(unbound -V 2>/dev/null | head -1 | sed 's/.*Version //')"
 
-    msg_info "Mise à jour d'Unbound via apt..."
+    msg_info "Mise à jour d'Unbound via apk..."
 
-    apt-get update >> "$LOG_FILE" 2>&1 || { msg_error "Échec d'apt update"; return 1; }
+    apk update >> "$LOG_FILE" 2>&1 || { msg_error "Échec d'apk update"; return 1; }
 
-    local avail_ver
-    avail_ver=$(apt-cache policy unbound 2>/dev/null | grep 'Candidate:' | awk '{print $2}')
-    [[ -z "$avail_ver" ]] && { msg_error "Impossible de déterminer la version disponible"; return 1; }
-
-    if [[ -n "$current_ver" ]] && dpkg --compare-versions "$current_ver" ge "$avail_ver"; then
-        msg_ok "Unbound déjà à jour (v${current_ver})"
-        return 0
-    fi
-
-    apt-get install --only-upgrade -y unbound ca-certificates dnsutils >> "$LOG_FILE" 2>&1 || {
+    apk add --upgrade --no-cache unbound ca-certificates bind-tools >> "$LOG_FILE" 2>&1 || {
         msg_error "Échec de la mise à jour Unbound"
         return 1
     }
 
-    msg_ok "Unbound mis à jour: ${current_ver:-?} → ${avail_ver}"
+    local new_ver
+    new_ver="$(unbound -V 2>/dev/null | head -1 | sed 's/.*Version //')"
+    rc-service unbound restart &>/dev/null || true
+
+    msg_ok "Unbound mis à jour: ${current_ver:-?} → ${new_ver:-actuel}"
 }
 
 show_menu() {
@@ -1596,8 +1560,8 @@ show_menu() {
         header_info
 
         local ub_status agh_status
-        ub_status=$(systemctl is-active unbound 2>/dev/null || echo "inactif")
-        agh_status=$(systemctl is-active AdGuardHome 2>/dev/null || echo "inactif")
+        ub_status=$(rc-service unbound status 2>/dev/null | grep -qi "started\|running" && echo "active" || echo "inactif")
+        agh_status=$(rc-service AdGuardHome status 2>/dev/null | grep -qi "started\|running" && echo "active" || echo "inactif")
 
         local ub_dot agh_dot
         [[ "$ub_status"  == "active" ]] && ub_dot="[+]" || ub_dot="[ ]"
@@ -1621,8 +1585,8 @@ show_menu() {
             "2" "  Reparer / Reconfigurer   Unbound + AdGuard upstream" \
             "3" "  Diagnostics              Health check complet + benchmark" \
             "4" "  Statistiques Unbound     Cache, requetes, performances" \
-            "5" "  MAJ Unbound              apt upgrade vers derniere version dispo" \
-            "6" "  MAJ Systeme              apt update + upgrade" \
+            "5" "  MAJ Unbound              apk upgrade vers derniere version dispo" \
+            "6" "  MAJ Systeme              apk update + upgrade" \
             "7" "  MAJ Script               Depuis GitHub" \
             "8" "  Reset mot de passe       AdGuard Home" \
             "9" "  Desinstaller             Supprimer AdGuard Home + Unbound" \
@@ -1686,7 +1650,7 @@ show_menu() {
                     if unbound-control stats_noreset > "$stats_file" 2>&1 && [[ -s "$stats_file" ]]; then
                         whiptail --title " Statistiques Unbound " --scrolltext --textbox "$stats_file" 26 76
                     else
-                        whiptail --msgbox "Statistiques non disponibles.\nUnbound est-il actif ? (systemctl status unbound)" 9 56
+                        whiptail --msgbox "Statistiques non disponibles.\nUnbound est-il actif ? (rc-service unbound status)" 9 56
                     fi
                     rm -f "$stats_file"
                 else
@@ -1698,10 +1662,10 @@ show_menu() {
                 ;;
             6)
                 msg_info "Mise à jour du système en cours..."
-                apt-get update -qq && apt-get upgrade -y -qq --no-install-recommends
+                apk update -q && apk upgrade --no-cache
                 msg_ok "Système à jour"
                 whiptail --title " MAJ systeme " \
-                    --msgbox "apt update + upgrade termines avec succes." 8 50
+                    --msgbox "apk update + upgrade termines avec succes." 8 50
                 ;;
             7) update_script ;;
             8)
@@ -1741,7 +1705,7 @@ show_menu() {
              12)
                 if retune_stack; then
                     whiptail --title " Tuning re-applique " \
-                        --msgbox "Le tuning complet (sysctl, Unbound, tmpfs, affinite CPU) a ete re-applique sur l'installation existante." 10 60
+                        --msgbox "Le tuning complet (sysctl, Unbound, tmpfs, limites OpenRC) a ete re-applique sur l'installation existante." 10 60
                 fi
                 ;;
              13) exit 0 ;;
@@ -1759,7 +1723,7 @@ show_help() {
     echo -e "  ${YW}--repair${CL}             Reconfigurer Unbound + AdGuard (sans réinstaller)"
     echo -e "  ${YW}--retune${CL}             Re-appliquer tout le tuning sur une install existante"
     echo -e "  ${YW}--unbound-only${CL}       Installer/reconfigurer uniquement Unbound"
-    echo -e "  ${YW}--update-unbound${CL}     Mettre à jour Unbound via apt (version distro)"
+    echo -e "  ${YW}--update-unbound${CL}     Mettre à jour Unbound via apk (version distro)"
     echo -e "  ${YW}--update${CL}             Mettre à jour ce script depuis GitHub"
     echo -e "  ${YW}--uninstall${CL}          Désinstaller AdGuard Home et Unbound"
     echo -e "  ${YW}--health${CL}             Exécuter le health check complet"

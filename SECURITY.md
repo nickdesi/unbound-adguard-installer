@@ -25,8 +25,8 @@ Nous accusons réception sous **72 h** et proposons un correctif ou une mitigati
 Ce script s'exécute en `root` et modifie des composants système sensibles. Il n'expose **aucun service réseau vers l'extérieur** (Unbound écoute sur `127.0.0.1:5335`, AdGuard Home sur l'interface du LXC).
 
 Il touche notamment :
-- Services systemd (`unbound`, `AdGuardHome`, désactivation éventuelle de `systemd-resolved`)
-- `/etc/unbound/`, `/etc/resolv.conf`, `/etc/fstab`, `/etc/sysctl.d/`
+- Services OpenRC (`unbound`, `AdGuardHome`)
+- `/etc/unbound/`, `/etc/resolv.conf`, `/etc/fstab`, `/etc/sysctl.d/`, `/etc/conf.d/`
 - Paramètres réseau (sysctl), tmpfs cache
 
 Recommandations :

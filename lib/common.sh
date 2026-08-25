@@ -326,20 +326,14 @@ restart_service_safely() {
 
     msg_info "Redémarrage de $service..."
 
-    if ! systemctl restart "$service"; then
+    if ! rc-service "$service" restart &>/dev/null; then
         msg_error "Échec du redémarrage de $service"
         return 1
     fi
 
-    # Wait for service to be active (--wait supported on systemd ≥ 236)
-    if systemctl is-active --wait --timeout="$timeout" "$service" &>/dev/null; then
-        msg_ok "Service $service actif"
-        return 0
-    fi
-
-    # Fallback: manual poll loop
+    # Poll loop with rc-service status
     while (( elapsed < timeout )); do
-        if systemctl is-active --quiet "$service"; then
+        if rc-service "$service" status &>/dev/null; then
             msg_ok "Service $service actif"
             return 0
         fi
@@ -348,7 +342,7 @@ restart_service_safely() {
     done
 
     msg_error "Timeout: $service n'est pas devenu actif après ${timeout}s"
-    systemctl status "$service" --no-pager
+    rc-service "$service" status 2>/dev/null || true
     return 1
 }
 
@@ -416,7 +410,7 @@ require_command() {
 
     if ! command -v "$cmd" &>/dev/null; then
         msg_error "Commande requise non trouvée: $cmd"
-        msg_info "Installation recommandée: apt-get install -y $pkg"
+        msg_info "Installation recommandée: apk add $pkg"
         return 1
     fi
 

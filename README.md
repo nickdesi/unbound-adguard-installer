@@ -62,37 +62,42 @@ graph LR
 
 ---
 
-## 🚀 Démarrage rapide (＜ 2 min)
+## 🚀 Démarrage rapide (＜ 1 min)
 
-> Fonctionne dans un **LXC Debian/Ubuntu dédié** avec accès Internet et une IP fixe.
+> Fonctionne dans un **LXC Alpine Linux dédié** (Alpine 3.20+) avec accès Internet et une IP fixe.
 
-### One-liner
+### One-liner (recommandé)
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/nickdesi/unbound-adguard-installer/main/setup.sh)"
+sh -c "$(wget -qO- https://raw.githubusercontent.com/nickdesi/unbound-adguard-installer/main/setup.sh)"
+```
+
+Ou avec `curl` si déjà installé :
+```bash
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/nickdesi/unbound-adguard-installer/main/setup.sh)"
 ```
 
 Avec options (ex. installation non interactive, upstream Quad9) :
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/nickdesi/unbound-adguard-installer/main/setup.sh)" -- --upstream quad9 --install
+sh -c "$(wget -qO- https://raw.githubusercontent.com/nickdesi/unbound-adguard-installer/main/setup.sh)" -- --upstream quad9 --install
 ```
 
 > [!IMPORTANT]
-> N'utilisez **pas** `install_unbound_interactive.sh` directement en one-liner. Le script principal dépend de `lib/` ; le bootstrap `setup.sh` télécharge le dépôt complet puis lance l'installation.
+> N'utilisez **pas** `install_unbound_interactive.sh` directement en one-liner. Le script principal dépend de `lib/` ; le bootstrap `setup.sh` installe les dépendances requises, télécharge le dépôt complet puis lance l'installation.
 
 ### Installation manuelle
 
 ```bash
 git clone https://github.com/nickdesi/unbound-adguard-installer.git
 cd unbound-adguard-installer
-sudo ./install_unbound_interactive.sh --upstream quad9 --install
+./install_unbound_interactive.sh --upstream quad9 --install
 ```
 
 ### Simulation sans risque
 
 ```bash
-sudo ./install_unbound_interactive.sh --dry-run --install
+./install_unbound_interactive.sh --dry-run --install
 ```
 
 Une fois installé, ouvrez **`http://IP_DU_LXC:3000`** pour finaliser l'assistant AdGuard Home, puis pointez le DNS de votre box/DHCP vers l'IP du LXC. 🎉
@@ -103,8 +108,8 @@ Une fois installé, ouvrez **`http://IP_DU_LXC:3000`** pour finaliser l'assistan
 
 | Méthode | Commande |
 |---------|----------|
-| **Recommandée** (bootstrap) | `bash -c "$(curl -fsSL …/setup.sh)"` |
-| Manuel (git clone) | `sudo ./install_unbound_interactive.sh` |
+| **Recommandée** (bootstrap) | `sh -c "$(wget -qO- …/setup.sh)"` |
+| Manuel (git clone) | `./install_unbound_interactive.sh` |
 | Non interactive + upstream | `… --upstream quad9 --install` |
 | Simulation | `… --dry-run --install` |
 
@@ -112,10 +117,10 @@ Une fois installé, ouvrez **`http://IP_DU_LXC:3000`** pour finaliser l'assistan
 
 | Ressource | Minimum | Recommandé |
 |-----------|---------|------------|
-| OS | Debian 12 / Ubuntu 24.04 | Debian 12 |
+| OS | **Alpine Linux 3.20+** | **Alpine Linux 3.21** |
 | CPU | 1 vCPU | 2 vCPU |
-| RAM | 512 MB | 1 GB+ |
-| Disque | 2 GB | 4 GB+ |
+| RAM | **128 MB** (LXC + AGH + Unbound < 60 MB en prod) | 512 MB+ |
+| Disque | **500 MB** | 1 GB+ |
 | Réseau | IP statique | IP statique + routeur pointant vers ce DNS |
 
 ---
@@ -134,7 +139,7 @@ Usage: ./install_unbound_interactive.sh [OPTIONS]
   --benchmark [n]      Benchmark DNS local (défaut : 300 requêtes)
   --benchmark-dnsperf  Benchmark réaliste avec dnsperf (10k requêtes)
   --update             Mettre à jour le script depuis GitHub
-  --update-unbound     Mettre à jour Unbound via apt (version distro)
+  --update-unbound     Mettre à jour Unbound via apk (version distro)
   --uninstall          Désinstaller AdGuard Home et Unbound
   --auto-upstream      Benchmark DoT + sélection auto du plus rapide
   --upstream <nom>      cloudflare | quad9 | google | adguard
@@ -146,11 +151,11 @@ Usage: ./install_unbound_interactive.sh [OPTIONS]
 **Exemples**
 
 ```bash
-sudo ./install_unbound_interactive.sh --health
-sudo ./install_unbound_interactive.sh --stats
-sudo ./install_unbound_interactive.sh --benchmark 500
-sudo ./install_unbound_interactive.sh --upstream cloudflare --repair
-sudo ./install_unbound_interactive.sh --retune          # re-tune sans réinstaller
+./install_unbound_interactive.sh --health
+./install_unbound_interactive.sh --stats
+./install_unbound_interactive.sh --benchmark 500
+./install_unbound_interactive.sh --upstream cloudflare --repair
+./install_unbound_interactive.sh --retune          # re-tune sans réinstaller
 ```
 
 ---
@@ -163,14 +168,14 @@ sudo ./install_unbound_interactive.sh --retune          # re-tune sans réinstal
 | 2 | Réparer / Reconfigurer | Recalibre Unbound et réapplique l'upstream AdGuard |
 | 3 | Diagnostics | Health check DNS + benchmark |
 | 4 | Stats Unbound | Statistiques cache via `unbound-control` |
-| 5 | MAJ Unbound | `apt install --only-upgrade unbound` |
-| 6 | MAJ Système | `apt-get update && apt-get upgrade` |
+| 5 | MAJ Unbound | `apk add --upgrade unbound` |
+| 6 | MAJ Système | `apk update && apk upgrade` |
 | 7 | MAJ Script | Met à jour le script depuis GitHub |
 | 8 | Reset mot de passe | Réinitialise le mot de passe AdGuard Home |
 | 9 | Désinstaller | Suppression AdGuard Home + Unbound |
 | 10 | Auto-Upstream | Benchmark 7 fournisseurs DoT + sélection auto |
 | 11 | Benchmark DNS (dnsperf) | Benchmark réaliste avec dnsperf |
-| 12 | Re-appliquer tuning | Rejoue sysctl, config Unbound, tmpfs, affinité CPU (sans réinstaller) |
+| 12 | Re-appliquer tuning | Rejoue sysctl, config Unbound, tmpfs, limites OpenRC (sans réinstaller) |
 | 13 | Quitter | Ferme le menu |
 
 ---
@@ -207,8 +212,8 @@ Exemples indicatifs (4 vCPU) :
 | AdGuard Home | `/opt/AdGuardHome` |
 | Config AdGuard Home | `/opt/AdGuardHome/AdGuardHome.yaml` |
 | Config Unbound générée | `/etc/unbound/unbound.conf.d/99-adguard-unbound-installer.conf` |
-| Root hints | `/usr/share/dns/root.hints` |
-| Trust anchor DNSSEC | `/var/lib/unbound/root.key` |
+| Root hints | `/etc/unbound/root.hints` |
+| Trust anchor DNSSEC | `/etc/unbound/root.key` |
 | Logs installateur | `/var/log/adguard-unbound-installer.log` |
 | Port Unbound | `127.0.0.1:5335` |
 | Interface AdGuard Home | `http://IP_DU_LXC:3000` |
@@ -224,10 +229,11 @@ Upstream par défaut : `cloudflare`.
 tail -f /var/log/adguard-unbound-installer.log
 ```
 
-**Services & config**
+**Services & config (OpenRC)**
 ```bash
-sudo systemctl status AdGuardHome unbound
-sudo unbound-checkconf
+rc-service AdGuardHome status
+rc-service unbound status
+unbound-checkconf
 ```
 
 **Tests DNS**
@@ -239,7 +245,7 @@ dig @127.0.0.1 google.com                      # Via AdGuard Home
 
 **Erreur « hôte Proxmox détecté »** → installez dans un LXC dédié. Le contournement existe mais reste risqué :
 ```bash
-sudo ./install_unbound_interactive.sh --allow-proxmox-host --install
+./install_unbound_interactive.sh --allow-proxmox-host --install
 ```
 
 **Erreur « `lib/common.sh` introuvable »** → le dépôt n'a pas été cloné entièrement :
@@ -264,10 +270,10 @@ Couverture : validation IP/port, détection système, logique de performance, ba
 
 Ce script modifie des services système, des fichiers DNS et des paramètres réseau. Des sauvegardes sont créées quand applicable. Recommandé en premier :
 ```bash
-sudo ./install_unbound_interactive.sh --dry-run --install
+./install_unbound_interactive.sh --dry-run --install
 ```
 
-Pour un usage Proxmox fiable : LXC isolé · IP fixe · éviter le nœud PVE · un DNS de secours côté DHCP.
+Pour un usage Proxmox fiable : LXC Alpine isolé · IP fixe · éviter le nœud PVE · un DNS de secours côté DHCP.
 
 ---
 
@@ -275,10 +281,10 @@ Pour un usage Proxmox fiable : LXC isolé · IP fixe · éviter le nœud PVE · 
 
 Appliquez ces réglages dans **Settings → General** pour maximiser la découvrabilité :
 
-- **Description** : `Installer et auto-optimiser une pile DNS AdGuard Home + Unbound (DNSSEC, DoT) dans un LXC Proxmox — en une commande.`
+- **Description** : `Installer et auto-optimiser une pile DNS AdGuard Home + Unbound (DNSSEC, DoT) ultra-légère dans un LXC Alpine Linux Proxmox — en une commande.`
 - **Website** : lien vers le dépôt.
 - **Topics** (jusqu'à 20) :
-  `proxmox`, `lxc`, `unbound`, `adguard-home`, `dns`, `dns-server`, `dns-over-tls`, `dnssec`, `self-hosted`, `homelab`, `bash`, `debian`, `ubuntu`, `privacy`, `network-security`
+  `proxmox`, `lxc`, `alpine-linux`, `unbound`, `adguard-home`, `dns`, `dns-server`, `dns-over-tls`, `dnssec`, `self-hosted`, `homelab`, `bash`, `openrc`, `privacy`, `network-security`
 - **Social preview** : ajoutez une image (capture du menu ou bannière) pour le partage sur les réseaux.
 
 ---

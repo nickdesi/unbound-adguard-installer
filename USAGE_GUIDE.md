@@ -236,10 +236,10 @@ preflight_checks() {
     # Vérifier OS
     if [[ -f /etc/os-release ]]; then
         source /etc/os-release
-        if [[ "$ID" == "debian" || "$ID" == "ubuntu" ]]; then
+        if [[ "$ID" == "alpine" ]]; then
             echo "✓ OS compatible: $ID $VERSION_ID"
         else
-            echo "✗ OS non supporté: $ID"
+            echo "✗ OS non supporté: $ID (Alpine Linux requis)"
             ((errors++))
         fi
     fi

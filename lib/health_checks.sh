@@ -25,8 +25,8 @@ test_unbound_resolution() {
     msg_info "Test de résolution DNS via Unbound (port $unbound_port)..."
 
     if ! command -v dig &>/dev/null; then
-        msg_warn "dig non disponible, installation de dnsutils..."
-        apt-get install -y dnsutils &>/dev/null || return 1
+        msg_warn "dig non disponible, installation de bind-tools..."
+        apk add --no-cache bind-tools &>/dev/null || return 1
     fi
 
     local result
@@ -129,7 +129,7 @@ check_unbound_health() {
     msg_info "Vérification santé Unbound..."
 
     # 1. Service status
-    if ! systemctl is-active --quiet unbound; then
+    if ! rc-service unbound status &>/dev/null; then
         msg_error "Service Unbound non actif"
         ((++errors))
     else
@@ -192,7 +192,7 @@ check_adguard_health() {
     msg_info "Vérification santé AdGuard Home..."
 
     # 1. Service status
-    if ! systemctl is-active --quiet AdGuardHome; then
+    if ! rc-service AdGuardHome status &>/dev/null; then
         msg_error "Service AdGuard Home non actif"
         ((++errors))
     else
@@ -511,11 +511,11 @@ ensure_dnsperf() {
         return 0
     fi
     msg_info "Installation de dnsperf..."
-    apt-get update -qq &>/dev/null || true
-    apt-get install -y -qq --no-install-recommends dnsperf 2>/dev/null && return 0
+    apk update -q &>/dev/null || true
+    apk add --no-cache dnsperf 2>/dev/null && return 0
     # Fallback: compilation depuis source
-    msg_info "dnsperf non disponible via apt, tentative compilation..."
-    apt-get install -y -qq --no-install-recommends build-essential autoconf automake libtool libssl-dev libldns-dev &>/dev/null || true
+    msg_info "dnsperf non disponible via apk, tentative compilation..."
+    apk add --no-cache build-base autoconf automake libtool openssl-dev ldns-dev git &>/dev/null || true
     local tmp_dir
     tmp_dir=$(mktemp -d)
     if git clone --depth 1 https://github.com/DNS-OARC/dnsperf.git "$tmp_dir/dnsperf" 2>/dev/null; then

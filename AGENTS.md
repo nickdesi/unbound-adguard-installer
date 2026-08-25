@@ -1,16 +1,15 @@
 # AGENTS.md — AdGuard Home + Unbound Installer
 
-**Purpose**: Bash installer for AdGuard Home + Unbound DNS stack on Proxmox LXC (Debian/Ubuntu only). Docs & output are French; code is English.
+**Purpose**: Installer for AdGuard Home + Unbound DNS stack on Proxmox LXC (Alpine Linux with OpenRC + apk). Docs & output are French; code is English.
 
 ## Entrypoints & Structure
 
-- `install_unbound_interactive.sh` (1862 lines, v3.5.0) — main script. Must run as root.
+- `install_unbound_interactive.sh` (v4.0.0) — main script. Must run as root.
   - Sources `lib/common.sh` (required; fail-fast if missing).
   - Sources `lib/health_checks.sh` (optional; degrades gracefully via `HEALTH_CHECKS_AVAILABLE` flag).
-- `setup.sh` — bootstrap that downloads full repo via `curl`+`tar` and invokes the main script.
-- `tests/test_suite.sh` — self-contained tests (mocks functions inline, never sources lib).
+- `setup.sh` — POSIX sh bootstrap that auto-installs bootstrap dependencies via apk, downloads full repo, and invokes the main script.
+- `tests/test_suite.sh` — self-contained test suite.
 - `.agent/workflows/` — agent workflow markdown files for code refactoring, debugging, etc.
-- `docs/` directory referenced in `CONTRIBUTING.md` **does not exist** in the repo.
 
 ## Key Commands
 
