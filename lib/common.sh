@@ -361,6 +361,11 @@ restart_service_safely() {
 
     msg_info "Redémarrage de $service..."
 
+    if [[ "$service" == "AdGuardHome" && ! -f "/etc/init.d/AdGuardHome" && -x "/opt/AdGuardHome/AdGuardHome" ]]; then
+        /opt/AdGuardHome/AdGuardHome -s install &>/dev/null || true
+        rc-update add AdGuardHome default &>/dev/null || true
+    fi
+
     # In OpenRC, restart fails if service is stopped. Try restart, fallback to start.
     if ! rc-service "$service" restart &>/dev/null; then
         if ! rc-service "$service" start &>/dev/null; then

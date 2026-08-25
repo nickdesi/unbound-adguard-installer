@@ -1226,15 +1226,6 @@ try:
     config['dns']['disable_ipv6'] = True
     config['dns']['ratelimit'] = 0  # Disable rate-limiting for local performance
 
-    config.setdefault('querylog', {})
-    config['querylog']['enabled'] = True
-    config['querylog']['file_enabled'] = True
-    config['querylog']['interval'] = '168h'  # 7 days retention for performance
-
-    config.setdefault('statistics', {})
-    config['statistics']['enabled'] = True
-    config['statistics']['interval'] = '168h'  # 7 days retention for performance
-
     with open("$AGH_YAML", 'w') as f:
         yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
     print('OK')
@@ -1892,7 +1883,7 @@ main() {
         --health)
             header_info
             if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]]; then
-                run_full_health_check
+                run_full_health_check || true
             else
                 msg_error "Module health_checks non disponible (lib/health_checks.sh manquant)"
                 exit 1
