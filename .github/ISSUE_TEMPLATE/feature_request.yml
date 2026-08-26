@@ -1,0 +1,27 @@
+name: "💡 Feature Request"
+description: Suggest an idea or enhancement for AdGuard Home + Unbound Installer
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        We appreciate suggestions to improve speed, security, and functionality!
+  - type: textarea
+    id: feature
+    attributes:
+      label: Feature Description
+      description: A clear and concise description of what you would like to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Problem or Use Case
+      description: Is your feature request related to a specific problem or homelab architecture?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Describe any alternative solutions or features you've considered.

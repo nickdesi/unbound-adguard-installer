@@ -16,9 +16,15 @@
 [![Issues](https://img.shields.io/github/issues/nickdesi/unbound-adguard-installer)](https://github.com/nickdesi/unbound-adguard-installer/issues)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/nickdesi/unbound-adguard-installer/pulls)
 
-[🚀 Quick Start](#-quick-start) • [✨ Key Features](#-key-features) • [🏗️ Architecture](#️-architecture) • [⚙️ CLI & Menu](#️-cli-commands--options) • [🧠 Auto-Tuning](#-automatic-resource-tuning) • [🩺 Diagnostics](#-diagnostics--troubleshooting) • [🤝 Contributing](CONTRIBUTING.md)
+[🚀 Quick Start](#-quick-start) • [✨ Key Features](#-key-features) • [📊 Comparison](#-why-this-stack-vs-alternatives) • [🏗️ Architecture](#️-architecture) • [⚙️ CLI & Menu](#️-cli-commands--options) • [🧠 Auto-Tuning](#-automatic-resource-tuning) • [🩺 Diagnostics](#-diagnostics--troubleshooting) • [🤝 Contributing](CONTRIBUTING.md)
 
 </div>
+
+---
+
+<p align="center">
+  ⭐ <b>If you find this project useful, please consider giving it a star on GitHub! It helps more homelabbers discover it.</b> ⭐
+</p>
 
 ---
 
@@ -32,14 +38,27 @@ A turnkey solution to deploy an enterprise-grade, privacy-first local DNS stack 
 ## ✨ Key Features
 
 - 🚀 **One-Liner Deployment** — Fully automated download, configuration, service setup, and verification in under 60 seconds.
+- 🪶 **Ultra-Lightweight Footprint** — Optimized for Alpine Linux; entire stack consumes **< 60 MB RAM** in production.
 - 🧠 **Dynamic Resource Auto-Tuning** — Caches (`rrset`/`msg` 2:1 ratio), socket buffers, worker threads, and rate limits are calculated on-the-fly based on container cgroups.
 - 🔒 **Encrypted DNS-over-TLS (DoT)** — Secure upstream forwarding with strict certificate validation (Cloudflare, Quad9, Google, AdGuard).
 - ✅ **Full DNSSEC Validation & Smart Caching** — Out-of-the-box DNSSEC enforcement, aggressive NSEC caching, `serve-expired` resilience, and `prefetch`.
 - ⚡ **Integrated Performance Benchmarks** — Built-in automated latency testing across DoT providers and realistic multi-query stress-testing with `dnsperf`.
-- 🪶 **Ultra-Lightweight Footprint** — Optimized for Alpine Linux; entire stack consumes **< 60 MB RAM** in production.
 - 🔁 **Idempotent & Safe Operations** — Automatic pre-modification backups, rollback mechanisms, non-destructive `--retune`, and a `--dry-run` simulation mode.
 - 🖥️ **Interactive TUI + Full CLI** — Intuitive Whiptail interactive menu for human operators and scriptable flags for headless automation.
 - 🩺 **Comprehensive Health Checks & Metrics** — Real-time Unbound cache hit statistics, DNSSEC failure tests, and service supervisor monitors.
+
+---
+
+## 📊 Why This Stack vs Alternatives?
+
+| Feature / Metric | 🔴 Vanilla AdGuard / Pi-hole | 🟡 Debian/Ubuntu + Unbound | 🟢 **This Installer (Alpine + Unbound)** |
+| :--- | :--- | :--- | :--- |
+| **Base RAM Usage** | ~150 – 300 MB | ~350 – 600 MB | **⚡ < 60 MB RAM** |
+| **Encrypted Upstream** | Plain UDP (manual DoH) | Manual TLS setup | **🔒 DoT (Port 853) Out-of-the-Box** |
+| **DNSSEC Enforcement** | Basic / Optional | Manual config | **🛡️ Strict Automated Validation & Root Anchors** |
+| **Hardware Tuning** | Static defaults | Static defaults | **🧠 Dynamic cgroups Auto-Scaling (CPU/RAM)** |
+| **Zero-Latency Cache** | Standard TTL expiry | Manual persistence | **⚡ In-Memory + `serve-expired` + `prefetch`** |
+| **Deployment Time** | 15 – 30 minutes | 20+ minutes | **🚀 < 60 seconds (1-liner)** |
 
 ---
 
@@ -304,6 +323,18 @@ This repository uses automated unit tests and CI workflows to validate every com
 ```
 
 Continuous Integration verifies ShellCheck compliance, argument parsing, IPv4/IPv6 validators, backup/rollback procedures, and configuration templating across target environments.
+
+---
+
+## 🌟 Stargazers & Community
+
+If this stack simplified your homelab or boosted your network privacy, please leave a star ⭐ — it helps keep the project maintained and visible to other self-hosters!
+
+<div align="center">
+
+[![Star History Chart](https://api.star-history.com/svg?repos=nickdesi/unbound-adguard-installer&type=Date)](https://star-history.com/#nickdesi/unbound-adguard-installer&Date)
+
+</div>
 
 ---
 
