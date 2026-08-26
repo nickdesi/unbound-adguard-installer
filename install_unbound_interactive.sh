@@ -1417,40 +1417,32 @@ uninstall_all() {
 # --- Main Menus ---
 
 select_upstream() {
-    local cf_tag q9_tag gg_tag ag_tag
-    local term_cols term_lines menu_width menu_height list_height
-    cf_tag="OFF"; q9_tag="OFF"; gg_tag="OFF"; ag_tag="OFF"
+    local cf_tag="OFF" q9_tag="OFF" gg_tag="OFF" ag_tag="OFF"
     case "$SELECTED_UPSTREAM" in
         cloudflare) cf_tag="ON" ;;
         quad9)      q9_tag="ON" ;;
         google)     gg_tag="ON" ;;
         adguard)    ag_tag="ON" ;;
+        *)          cf_tag="ON" ;;
     esac
-
-    term_cols=$(tput cols 2>/dev/null || echo 80)
-    term_lines=$(tput lines 2>/dev/null || echo 24)
-
-    menu_width=$((term_cols - 6))
-    (( menu_width > 90 )) && menu_width=90
-    (( menu_width < 56 )) && menu_width=56
-
-    menu_height=$((term_lines - 6))
-    (( menu_height > 20 )) && menu_height=20
-    (( menu_height < 13 )) && menu_height=13
-
-    list_height=4
 
     local choice
     choice=$(whiptail_safe \
         --title " DNS-over-TLS Upstream (Port 853) " \
         --ok-button "Confirm" \
         --cancel-button "Cancel" \
-        --radiolist "Select upstream provider:\n(Space to select, Enter to confirm)" "$menu_height" "$menu_width" "$list_height" \
-        "cloudflare" "1.1.1.1       Fast & Privacy-First" "$cf_tag" \
-        "quad9"      "9.9.9.9       Strict DNSSEC & Malware Blocking" "$q9_tag" \
-        "google"     "8.8.8.8       Universal Availability" "$gg_tag" \
-        "adguard"    "94.140.14.14  Upstream Ad/Tracker Blocking" "$ag_tag") || return 1
-    [[ -n "$choice" ]] && SELECTED_UPSTREAM="$choice"
+        --radiolist "Select upstream provider:\n(Space to select, Enter to confirm)" 16 76 4 \
+        "1" "  Cloudflare   (1.1.1.1)       Fast & Privacy-First (DoT)" "$cf_tag" \
+        "2" "  Quad9        (9.9.9.9)       Strict DNSSEC & Malware Blocking" "$q9_tag" \
+        "3" "  Google       (8.8.8.8)       Universal & High Availability" "$gg_tag" \
+        "4" "  AdGuard      (94.140.14.14)  Upstream Ad/Tracker Blocking" "$ag_tag") || return 1
+
+    case "$choice" in
+        1) SELECTED_UPSTREAM="cloudflare" ;;
+        2) SELECTED_UPSTREAM="quad9" ;;
+        3) SELECTED_UPSTREAM="google" ;;
+        4) SELECTED_UPSTREAM="adguard" ;;
+    esac
     log "Upstream selected: ${SELECTED_UPSTREAM}"
 }
 
@@ -1607,18 +1599,20 @@ menu_change_upstream() {
         --title " Upstream DNS Selection (DoT Port 853) " \
         --cancel-button "Back" \
         --ok-button "Apply" \
-        --menu "Select the encrypted DoT upstream provider for Unbound:" 17 72 5 \
-        "cloudflare" "1.1.1.1       Fast & Encrypted (Cloudflare DoT)" \
-        "quad9"      "9.9.9.9       Strict DNSSEC & Malware Blocking (Quad9)" \
-        "google"     "8.8.8.8       Universal & Reliable (Google DoT)" \
-        "adguard"    "94.140.14.14  Upstream Ad/Tracker Blocking (AdGuard)" \
-        "auto"       "⚡ Auto       Benchmark & select lowest latency provider") || return 0
+        --menu "Select the encrypted DoT upstream provider for Unbound:" 17 76 5 \
+        "1" "  Cloudflare   (1.1.1.1)       Fast & Encrypted (DoT)" \
+        "2" "  Quad9        (9.9.9.9)       Strict DNSSEC & Malware Blocking" \
+        "3" "  Google       (8.8.8.8)       Universal & High Availability" \
+        "4" "  AdGuard      (94.140.14.14)  Upstream Ad/Tracker Blocking" \
+        "5" "  Auto-Select  (Benchmark)    Test & choose lowest latency") || return 0
 
-    if [[ "$choice" == "auto" ]]; then
-        auto_benchmark_upstream
-    else
-        SELECTED_UPSTREAM="$choice"
-    fi
+    case "$choice" in
+        1) SELECTED_UPSTREAM="cloudflare" ;;
+        2) SELECTED_UPSTREAM="quad9" ;;
+        3) SELECTED_UPSTREAM="google" ;;
+        4) SELECTED_UPSTREAM="adguard" ;;
+        5) auto_benchmark_upstream ;;
+    esac
 
     msg_info "Applying upstream: ${SELECTED_UPSTREAM}"
     install_unbound
@@ -1633,7 +1627,7 @@ menu_diagnostics() {
         --title " Diagnostics & Performance " \
         --cancel-button "Back" \
         --ok-button "Open" \
-        --menu "Select a diagnostic or benchmarking tool:" 15 68 3 \
+        --menu "Select a diagnostic or benchmarking tool:" 15 72 3 \
         "1" "  Full Health Report (DNS, DNSSEC, Ports, Services)" \
         "2" "  Unbound Cache Statistics (unbound-control)" \
         "3" "  DNS Load Benchmark (dnsperf / 10,000 queries)") || return 0
@@ -1691,7 +1685,7 @@ menu_maintenance() {
         --title " Maintenance & Utilities " \
         --cancel-button "Back" \
         --ok-button "Execute" \
-        --menu "Administrative and maintenance operations:" 15 68 3 \
+        --menu "Administrative and maintenance operations:" 15 72 3 \
         "1" "  Recalculate Hardware Tuning (After RAM/CPU change)" \
         "2" "  Reset AdGuard Home Web Password" \
         "3" "  Uninstall Entire Stack (Full Clean Removal)") || return 0
@@ -1748,7 +1742,7 @@ show_menu() {
             --title " AdGuard Home + Unbound  v${SCRIPT_VERSION} " \
             --cancel-button "Quit" \
             --ok-button "Select" \
-            --menu "${status_line}\n\nSelect an action:" 18 72 4 \
+            --menu "${status_line}\n\nSelect an action:" 18 76 4 \
             "1" "  ${label_action} (Full Stack)" \
             "2" "  Change Upstream DNS (DoT Provider)" \
             "3" "  Diagnostics & Performance (Health, Stats, Benchmark)" \
@@ -1769,24 +1763,24 @@ show_help() {
     echo -e "${BL}Usage:${CL} $0 [OPTIONS]"
     echo ""
     echo -e "${GN}Options:${CL}"
-    echo -e "  ${YW}--install${CL}            Installation complète (AdGuard Home + Unbound)"
-    echo -e "  ${YW}--repair${CL}             Reconfigurer Unbound + AdGuard (sans réinstaller)"
-    echo -e "  ${YW}--retune${CL}             Re-appliquer tout le tuning sur une install existante"
-    echo -e "  ${YW}--unbound-only${CL}       Installer/reconfigurer uniquement Unbound"
-    echo -e "  ${YW}--update-unbound${CL}     Mettre à jour Unbound via apk (version distro)"
-    echo -e "  ${YW}--update${CL}             Mettre à jour ce script depuis GitHub"
-    echo -e "  ${YW}--uninstall${CL}          Désinstaller AdGuard Home et Unbound"
-    echo -e "  ${YW}--health${CL}             Exécuter le health check complet"
-    echo -e "  ${YW}--stats${CL}              Afficher les stats Unbound"
-    echo -e "  ${YW}--benchmark${CL} [n]      Tester les performances DNS (défaut: ${DEFAULT_BENCHMARK_QUERIES})"
-    echo -e "  ${YW}--benchmark-dnsperf${CL}   Benchmark réaliste avec dnsperf (10k requêtes)"
-    echo -e "  ${YW}--upstream${CL} <nom>     Forcer l'upstream (${VALID_UPSTREAMS[*]})"
-    echo -e "  ${YW}--auto-upstream${CL}       Sélectionner le plus rapide par benchmark DoT"
-    echo -e "  ${YW}--dry-run${CL}            Simuler les actions sans modifier le système"
-    echo -e "  ${YW}--allow-proxmox-host${CL} Autoriser l'exécution sur le nœud Proxmox (déconseillé)"
-    echo -e "  ${YW}--help${CL}               Afficher cette aide"
+    echo -e "  ${YW}--install${CL}            Full automated installation (AdGuard Home + Unbound)"
+    echo -e "  ${YW}--repair${CL}             Reconfigure Unbound + AdGuard (without reinstalling)"
+    echo -e "  ${YW}--retune${CL}             Re-apply full hardware tuning on existing install"
+    echo -e "  ${YW}--unbound-only${CL}       Install/reconfigure Unbound only"
+    echo -e "  ${YW}--update-unbound${CL}     Upgrade Unbound package via apk (distro version)"
+    echo -e "  ${YW}--update${CL}             Update this installer from GitHub"
+    echo -e "  ${YW}--uninstall${CL}          Uninstall AdGuard Home and Unbound completely"
+    echo -e "  ${YW}--health${CL}             Run full health check suite"
+    echo -e "  ${YW}--stats${CL}              Display live Unbound cache statistics"
+    echo -e "  ${YW}--benchmark${CL} [n]      Benchmark DNS latency (default: ${DEFAULT_BENCHMARK_QUERIES} queries)"
+    echo -e "  ${YW}--benchmark-dnsperf${CL}   High-throughput stress test with dnsperf (10k queries)"
+    echo -e "  ${YW}--upstream${CL} <name>    Set upstream provider (${VALID_UPSTREAMS[*]})"
+    echo -e "  ${YW}--auto-upstream${CL}       Benchmark and auto-select lowest latency DoT provider"
+    echo -e "  ${YW}--dry-run${CL}            Simulate actions without modifying system"
+    echo -e "  ${YW}--allow-proxmox-host${CL} Allow running directly on Proxmox VE host (not recommended)"
+    echo -e "  ${YW}--help${CL}               Show this help message"
     echo ""
-    echo -e "Sans option: menu interactif."
+    echo -e "Without options: launches the interactive TUI menu."
     exit 0
 }
 
