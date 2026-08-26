@@ -178,27 +178,27 @@ Maintenance & Lifecycle:
 
 ## 🖥️ Interactive TUI Menu
 
-When run without flags (`./install_unbound_interactive.sh`), an interactive Whiptail menu is launched:
+When executed without CLI flags (`./install_unbound_interactive.sh`), a streamlined, modern Whiptail menu is presented:
 
-```
-┌─────────────────────────── AdGuard Home & Unbound ──────────────────────────┐
+```text
+┌─────────────────────────── AdGuard Home + Unbound ──────────────────────────┐
+│  [+] Unbound: active   [+] AdGuard: active   > Upstream: cloudflare         │
+├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  [1]  Install               Full deployment & automated verification        │
-│  [2]  Repair / Reconfigure  Rebuild configs & restore upstream bindings     │
-│  [3]  Diagnostics           Run full DNS health check & latency tests       │
-│  [4]  Unbound Stats         Real-time cache hit ratios & operational stats  │
-│  [5]  Update Unbound        Upgrade Unbound to latest distribution package  │
-│  [6]  System Update         Run system-wide package updates (apk/apt)       │
-│  [7]  Update Script         Pull latest script improvements from GitHub     │
-│  [8]  Reset Password        Reset AdGuard Home administrator password       │
-│  [9]  Uninstall             Completely remove AdGuard Home & Unbound        │
-│  [10] Auto-Upstream         Benchmark 7 DoT providers & select fastest      │
-│  [11] dnsperf Benchmark     High-throughput realistic DNS stress test       │
-│  [12] Re-apply Tuning       Recalculate buffers, cache & limits             │
-│  [13] Quit                  Exit installer                                  │
+│  [1]  Install / Update Stack       Fresh deployment or 1-click global update│
+│  [2]  Change Upstream DNS (DoT)    Switch to Cloudflare, Quad9 or Auto-Fast │
+│  [3]  Diagnostics & Performance    Health check, DNSSEC test & Cache stats  │
+│  [4]  Maintenance & Utilities      Re-apply tuning, Reset password, Remove  │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Streamlined Category Workflows
+
+- **`[1] Install / Update Stack`** — Automatically detects active state: performs initial setup or updates Script + Unbound + Alpine OS + Tuning in a single pass.
+- **`[2] Change Upstream DNS`** — Switch between DoT providers (Cloudflare, Quad9, Google, AdGuard) or run the live **Auto-Benchmark** to select the fastest provider.
+- **`[3] Diagnostics & Performance`** — Instant unified health checks (DNSSEC validation, ports, services), live Unbound cache stats (`unbound-control`), and `dnsperf` load testing.
+- **`[4] Maintenance & Utilities`** — Recalculate hardware tuning (when modifying LXC RAM/CPU), reset AdGuard admin password, or cleanly uninstall the stack.
 
 ---
 

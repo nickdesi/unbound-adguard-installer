@@ -1537,6 +1537,188 @@ update_unbound_daemon() {
     msg_ok "Unbound mis à jour: ${current_ver:-?} → ${new_ver:-actuel}"
 }
 
+_run_full_install() {
+    STEP_TOTAL=4; STEP_CURRENT=0
+    select_upstream || return 0
+    _prefetch_adguard &
+    msg_step "Optimisations réseau (sysctl)"
+    apply_sysctl_tuning
+    msg_step "Installation & configuration Unbound"
+    install_unbound
+    msg_step "Installation AdGuard Home"
+    wait 2>/dev/null || true
+    install_adguard_home
+    msg_step "Finalisation de l'installation"
+    local local_ip; local_ip=$(get_local_ip)
+    local agh_port="3000"
+    type get_adguard_web_port &>/dev/null && agh_port=$(get_adguard_web_port)
+    STEP_TOTAL=0; STEP_CURRENT=0
+    if [[ -f "$AGH_YAML" ]] && grep -q "127.0.0.1:${UNBOUND_PORT}" "$AGH_YAML" 2>/dev/null; then
+        whiptail --title " Installation reussie " \
+            --msgbox "Tous les services sont actifs et verifies.\n\n  Upstream DNS : ${SELECTED_UPSTREAM}\n  AdGuard Home : http://${local_ip}:${agh_port}\n  Unbound      : port ${UNBOUND_PORT} (DoT)\n\nConsultez les logs : ${LOG_FILE}" 14 62
+    else
+        whiptail --title " Finalisation requise " \
+            --msgbox "AdGuard Home et Unbound sont installes et demarres !\n\n1. Ouvrez dans votre navigateur :\n   http://${local_ip}:3000\n   pour completer l'assistant initial AdGuard Home.\n\n2. Une fois l'assistant termine, relancez l'option 1 pour lier automatiquement AdGuard Home a Unbound (127.0.0.1:${UNBOUND_PORT}).\n\nConsultez les logs : ${LOG_FILE}" 17 68
+    fi
+}
+
+menu_install_update() {
+    local ub_status="$1" agh_status="$2"
+    if [[ "$ub_status" == "active" && "$agh_status" == "active" ]]; then
+        local sub_choice
+        sub_choice=$(whiptail_safe \
+            --title " Gestion du deploiement " \
+            --cancel-button "Retour" \
+            --ok-button "Choisir" \
+            --menu "La stack DNS est actuellement active.\nQue souhaitez-vous faire ?" 15 66 3 \
+            "1" "  Mise a jour globale (Script + Unbound + OS)" \
+            "2" "  Reparer / Reconfigurer (Recree les configs)" \
+            "3" "  Reinstaller a neuf (Ecraser l'installation)") || return 0
+
+        case "$sub_choice" in
+            1)
+                update_script
+                msg_info "Mise à jour des paquets Alpine..."
+                apk update -q && apk upgrade --no-cache
+                update_unbound_daemon
+                retune_stack
+                whiptail --title " Mise a jour terminee " \
+                    --msgbox "Tous les composants (Script, Unbound, OS, Tuning) ont ete mis a jour avec succes." 9 62
+                ;;
+            2)
+                select_upstream || return 0
+                install_unbound
+                configure_adguard_upstream
+                whiptail --title " Reconfiguration appliquee " \
+                    --msgbox "Unbound et AdGuard Home ont ete reconfigures.\n\n  Upstream actif : ${SELECTED_UPSTREAM}\n  Port Unbound   : ${UNBOUND_PORT}" 11 58
+                ;;
+            3)
+                _run_full_install
+                ;;
+        esac
+    else
+        _run_full_install
+    fi
+}
+
+menu_change_upstream() {
+    local choice
+    choice=$(whiptail_safe \
+        --title " Selection DNS Amont (DoT Port 853) " \
+        --cancel-button "Retour" \
+        --ok-button "Appliquer" \
+        --menu "Choisissez le fournisseur DoT amont pour Unbound :" 17 72 5 \
+        "cloudflare" "1.1.1.1       Rapide & Chiffre (Cloudflare DoT)" \
+        "quad9"      "9.9.9.9       DNSSEC strict & Securite (Quad9)" \
+        "google"     "8.8.8.8       Universel & Disponible (Google)" \
+        "adguard"    "94.140.14.14  Anti-pub/trackers en amont (AdGuard)" \
+        "auto"       "⚡ Auto       Tester et choisir le plus rapide") || return 0
+
+    if [[ "$choice" == "auto" ]]; then
+        auto_benchmark_upstream
+    else
+        SELECTED_UPSTREAM="$choice"
+    fi
+
+    msg_info "Application de l'upstream: ${SELECTED_UPSTREAM}"
+    install_unbound
+    configure_adguard_upstream
+    whiptail --title " Upstream modifie " \
+        --msgbox "Upstream applique avec succes : ${SELECTED_UPSTREAM}\n\nUnbound et AdGuard Home ont ete mis a jour sur le port 853." 10 60
+}
+
+menu_diagnostics() {
+    local diag_choice
+    diag_choice=$(whiptail_safe \
+        --title " Diagnostics & Performances " \
+        --cancel-button "Retour" \
+        --ok-button "Ouvrir" \
+        --menu "Choisissez un outil de diagnostic ou de mesure :" 15 68 3 \
+        "1" "  Rapport de sante complet (DNS, DNSSEC, Services)" \
+        "2" "  Statistiques du cache Unbound (unbound-control)" \
+        "3" "  Benchmark de charge DNS (dnsperf / 10 000 requetes)") || return 0
+
+    case "$diag_choice" in
+        1)
+            if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]]; then
+                local hc_raw hc_file
+                hc_raw=$(mktemp)
+                hc_file=$(mktemp)
+                run_full_health_check > "$hc_raw" 2>&1 || true
+                if type benchmark_dns_performance &>/dev/null; then
+                    benchmark_dns_performance 100 >> "$hc_raw" 2>&1 || true
+                fi
+                sanitize_textbox_output < "$hc_raw" > "$hc_file"
+                whiptail --title " Diagnostics  v${SCRIPT_VERSION} " --scrolltext --textbox "$hc_file" 26 92 || true
+                rm -f "$hc_raw" "$hc_file"
+            else
+                whiptail --title " Module manquant " \
+                    --msgbox "lib/health_checks.sh introuvable.\nAssurez-vous de cloner le dépôt complet." 9 58
+            fi
+            ;;
+        2)
+            if command -v unbound-control &>/dev/null; then
+                local stats_file; stats_file=$(mktemp)
+                if unbound-control stats_noreset > "$stats_file" 2>&1 && [[ -s "$stats_file" ]]; then
+                    whiptail --title " Statistiques Unbound " --scrolltext --textbox "$stats_file" 26 76
+                else
+                    whiptail --msgbox "Statistiques non disponibles.\nUnbound est-il actif ? (rc-service unbound status)" 9 56
+                fi
+                rm -f "$stats_file"
+            else
+                whiptail --msgbox "unbound-control introuvable.\nInstallez Unbound d'abord." 9 52
+            fi
+            ;;
+        3)
+            if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]] && type benchmark_dnsperf &>/dev/null; then
+                local bench_file
+                benchmark_dnsperf 10000 > /tmp/bench_raw.txt 2>&1 || true
+                sanitize_textbox_output < /tmp/bench_raw.txt > /tmp/bench_clean.txt 2>/dev/null
+                whiptail --title " Benchmark DNS (dnsperf) " --scrolltext --textbox /tmp/bench_clean.txt 26 92 2>/dev/null || \
+                    cat /tmp/bench_raw.txt
+                rm -f /tmp/bench_raw.txt /tmp/bench_clean.txt
+            else
+                whiptail --title " Module manquant " \
+                    --msgbox "lib/health_checks.sh ou dnsperf non disponible.\nAssurez-vous de cloner le dépôt complet." 9 58
+            fi
+            ;;
+    esac
+}
+
+menu_maintenance() {
+    local maint_choice
+    maint_choice=$(whiptail_safe \
+        --title " Maintenance & Depannage " \
+        --cancel-button "Retour" \
+        --ok-button "Executer" \
+        --menu "Operations d'administration et maintenance :" 15 68 3 \
+        "1" "  Re-calculer le tuning materiel (Apres modif RAM/CPU)" \
+        "2" "  Reinitialiser le mot de passe AdGuard Home" \
+        "3" "  Desinstaller completement la stack") || return 0
+
+    case "$maint_choice" in
+        1)
+            if retune_stack; then
+                whiptail --title " Tuning re-applique " \
+                    --msgbox "Le tuning complet (sysctl, Unbound, tmpfs, limites OpenRC) a ete recalcule et applique avec succes." 10 60
+            fi
+            ;;
+        2)
+            if reset_adguard_password; then
+                whiptail --title " Reset mot de passe " \
+                    --msgbox "Mot de passe AdGuard Home mis a jour.\n\nReconnectez-vous a l'interface web avec le nouveau mot de passe." 10 62
+            fi
+            ;;
+        3)
+            if whiptail \
+                --title " Desinstallation " \
+                --yesno "Desinstaller AdGuard Home et Unbound ?\n\nTous les fichiers de configuration seront supprimes.\nCette action est irreversible." 12 60; then
+                uninstall_all
+            fi
+            ;;
+    esac
+}
+
 show_menu() {
     local choice
     while true; do
@@ -1557,145 +1739,26 @@ show_menu() {
         local status_line="${ub_dot} Unbound: ${ub_status}   ${agh_dot} AdGuard: ${agh_status}   > ${SELECTED_UPSTREAM}"
         [[ "$DRY_RUN" == "true" ]] && status_line="[DRY-RUN]  ${status_line}"
 
-        # Label dynamique selon etat d'installation
-        local label_install="Installer              Installation complete"
+        local label_action="Installer / Deployer"
         if [[ "$ub_status" == "active" && "$agh_status" == "active" ]]; then
-            label_install="Reinstaller            Ecraser l'installation existante"
+            label_action="Mettre a jour / Reparer"
         fi
 
         choice=$(whiptail_safe \
             --title " AdGuard Home + Unbound  v${SCRIPT_VERSION} " \
             --cancel-button "Quitter" \
             --ok-button "Choisir" \
-            --menu "${status_line}\n\nSelectionnez une action :" 27 76 12 \
-            "1" "  ${label_install}" \
-            "2" "  Reparer / Reconfigurer   Unbound + AdGuard upstream" \
-            "3" "  Diagnostics              Health check complet + benchmark" \
-            "4" "  Statistiques Unbound     Cache, requetes, performances" \
-            "5" "  MAJ Unbound              apk upgrade vers derniere version dispo" \
-            "6" "  MAJ Systeme              apk update + upgrade" \
-            "7" "  MAJ Script               Depuis GitHub" \
-            "8" "  Reset mot de passe       AdGuard Home" \
-            "9" "  Desinstaller             Supprimer AdGuard Home + Unbound" \
-            "10" "  Auto-Upstream            Benchmark DoT + selection auto" \
-            "11" "  Benchmark DNS (dnsperf)  Benchmark réaliste avec dnsperf" \
-            "12" "  Re-appliquer tuning     Re-configurer sysctl+Unbound (installe)" \
-            "13" " Quitter") || exit 0
+            --menu "${status_line}\n\nSelectionnez une action :" 18 72 4 \
+            "1" "  ${label_action} (Stack complete)" \
+            "2" "  Changer de DNS Amont (Upstream DoT)" \
+            "3" "  Diagnostics & Performances (Sante, Stats, Benchmarks)" \
+            "4" "  Maintenance & Depannage (Tuning, Mot de passe, Uninstall)") || exit 0
 
         case $choice in
-                1)
-                    STEP_TOTAL=4; STEP_CURRENT=0
-                    select_upstream || continue
-                    _prefetch_adguard &
-                    msg_step "Optimisations réseau (sysctl)"
-                    apply_sysctl_tuning
-                    msg_step "Installation & configuration Unbound"
-                    install_unbound
-                    msg_step "Installation AdGuard Home"
-                    wait 2>/dev/null || true
-                    install_adguard_home
-                msg_step "Finalisation de l'installation"
-                local local_ip; local_ip=$(get_local_ip)
-                local agh_port="3000"
-                type get_adguard_web_port &>/dev/null && agh_port=$(get_adguard_web_port)
-                STEP_TOTAL=0; STEP_CURRENT=0
-                if [[ -f "$AGH_YAML" ]] && grep -q "127.0.0.1:${UNBOUND_PORT}" "$AGH_YAML" 2>/dev/null; then
-                    whiptail --title " Installation reussie " \
-                        --msgbox "Tous les services sont actifs et verifies.\n\n  Upstream DNS : ${SELECTED_UPSTREAM}\n  AdGuard Home : http://${local_ip}:${agh_port}\n  Unbound      : port ${UNBOUND_PORT} (DoT)\n\nConsultez les logs : ${LOG_FILE}" 14 62
-                else
-                    whiptail --title " Finalisation requise " \
-                        --msgbox "AdGuard Home et Unbound sont installes et demarres !\n\n1. Ouvrez dans votre navigateur :\n   http://${local_ip}:3000\n   pour completer l'assistant initial AdGuard Home.\n\n2. Une fois l'assistant termine, relancez l'option 2 (Reparer / Reconfigurer) pour lier automatiquement AdGuard Home a Unbound (127.0.0.1:${UNBOUND_PORT}).\n\nConsultez les logs : ${LOG_FILE}" 17 68
-                fi
-                ;;
-            2)
-                select_upstream || continue
-                install_unbound
-                configure_adguard_upstream
-                whiptail --title " Reconfiguration appliquee " \
-                    --msgbox "Unbound et AdGuard Home ont ete reconfigures.\n\n  Upstream actif : ${SELECTED_UPSTREAM}\n  Port Unbound   : ${UNBOUND_PORT}" 11 58
-                ;;
-            3)
-                if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]]; then
-                    local hc_raw hc_file
-                    hc_raw=$(mktemp)
-                    hc_file=$(mktemp)
-                    run_full_health_check > "$hc_raw" 2>&1 || true
-                    if type benchmark_dns_performance &>/dev/null; then
-                        benchmark_dns_performance 100 >> "$hc_raw" 2>&1 || true
-                    fi
-                    sanitize_textbox_output < "$hc_raw" > "$hc_file"
-                    whiptail --title " Diagnostics  v${SCRIPT_VERSION} " --scrolltext --textbox "$hc_file" 26 92 || true
-                    rm -f "$hc_raw" "$hc_file"
-                else
-                    whiptail --title " Module manquant " \
-                        --msgbox "lib/health_checks.sh introuvable.\nAssurez-vous de cloner le dépôt complet." 9 58
-                fi
-                ;;
-            4)
-                if command -v unbound-control &>/dev/null; then
-                    local stats_file; stats_file=$(mktemp)
-                    if unbound-control stats_noreset > "$stats_file" 2>&1 && [[ -s "$stats_file" ]]; then
-                        whiptail --title " Statistiques Unbound " --scrolltext --textbox "$stats_file" 26 76
-                    else
-                        whiptail --msgbox "Statistiques non disponibles.\nUnbound est-il actif ? (rc-service unbound status)" 9 56
-                    fi
-                    rm -f "$stats_file"
-                else
-                    whiptail --msgbox "unbound-control introuvable.\nInstallez Unbound d'abord (option 1)." 9 52
-                fi
-                ;;
-            5)
-                update_unbound_daemon
-                ;;
-            6)
-                msg_info "Mise à jour du système en cours..."
-                apk update -q && apk upgrade --no-cache
-                msg_ok "Système à jour"
-                whiptail --title " MAJ systeme " \
-                    --msgbox "apk update + upgrade termines avec succes." 8 50
-                ;;
-            7) update_script ;;
-            8)
-                if reset_adguard_password; then
-                    whiptail --title " Reset mot de passe " \
-                        --msgbox "Mot de passe AdGuard Home mis a jour.\n\nReconnectez-vous a l'interface web avec le nouveau mot de passe." 10 62
-                fi
-                ;;
-            9)
-                if whiptail \
-                    --title " Desinstallation " \
-                    --yesno "Desinstaller AdGuard Home et Unbound ?\n\nTous les fichiers de configuration seront supprimes.\nCette action est irreversible." 12 60; then
-                    uninstall_all
-                fi
-                ;;
-            10)
-                auto_benchmark_upstream
-                msg_info "Application du nouvel upstream: ${SELECTED_UPSTREAM}"
-                install_unbound
-                configure_adguard_upstream
-                whiptail --title " Auto-Upstream " \
-                    --msgbox "Upstream selectionne: ${SELECTED_UPSTREAM}\n\nUnbound et AdGuard Home reconfigures automatiquement." 10 58
-                ;;
-             11)
-                if [[ "$HEALTH_CHECKS_AVAILABLE" == "true" ]] && type benchmark_dnsperf &>/dev/null; then
-                    local bench_file
-                    benchmark_dnsperf 10000 > /tmp/bench_raw.txt 2>&1 || true
-                    sanitize_textbox_output < /tmp/bench_raw.txt > /tmp/bench_clean.txt 2>/dev/null
-                    whiptail --title " Benchmark DNS (dnsperf) " --scrolltext --textbox /tmp/bench_clean.txt 26 92 2>/dev/null || \
-                        cat /tmp/bench_raw.txt
-                    rm -f /tmp/bench_raw.txt /tmp/bench_clean.txt
-                else
-                    whiptail --title " Module manquant " \
-                        --msgbox "lib/health_checks.sh ou dnsperf non disponible.\nAssurez-vous de cloner le dépôt complet." 9 58
-                fi
-                ;;
-             12)
-                if retune_stack; then
-                    whiptail --title " Tuning re-applique " \
-                        --msgbox "Le tuning complet (sysctl, Unbound, tmpfs, limites OpenRC) a ete re-applique sur l'installation existante." 10 60
-                fi
-                ;;
-             13) exit 0 ;;
+            1) menu_install_update "$ub_status" "$agh_status" ;;
+            2) menu_change_upstream ;;
+            3) menu_diagnostics ;;
+            4) menu_maintenance ;;
         esac
     done
 }
