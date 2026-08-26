@@ -46,28 +46,28 @@ A turnkey solution to deploy an enterprise-grade, privacy-first local DNS stack 
 ## 🏗️ Architecture
 
 ```mermaid
-graph LR
-    subgraph Local LAN
-        Clients[💻 LAN Clients / Devices]
+flowchart LR
+    subgraph LAN["Local Network"]
+        Clients["💻 LAN Clients & Devices"]
     end
 
-    subgraph Proxmox LXC Container
-        AGH[🛡️ AdGuard Home<br/><b>Port 53</b> (DNS) & <b>Port 3000</b> (UI)<br/><i>Ad/Tracker Filtering & Analytics</i>]
-        UB[⚡ Unbound Resolver<br/><b>127.0.0.1:5335</b><br/><i>DNSSEC Validation + In-Memory Cache</i>]
+    subgraph LXC["Proxmox LXC Container"]
+        AGH["🛡️ AdGuard Home<br/>Port 53 (DNS) | Port 3000 (UI)<br/>Ad & Tracker Filtering"]
+        UB["⚡ Unbound Resolver<br/>127.0.0.1:5335<br/>DNSSEC & Memory Cache"]
     end
 
-    subgraph Upstream Resolvers
-        DoT[🔒 Encrypted DNS-over-TLS :853<br/><i>Cloudflare / Quad9 / Google / AdGuard</i>]
-        ROOT[🌐 Root & Authoritative Nameservers]
+    subgraph WAN["Upstream Resolvers"]
+        DoT["🔒 Encrypted DoT (:853)<br/>Cloudflare / Quad9 / Google / AdGuard"]
+        ROOT["🌐 Root Nameservers"]
     end
 
-    Clients -->|Plain DNS / DoH / DoT| AGH
-    AGH -->|Upstream Query: 127.0.0.1:5335| UB
-    UB -->|Encrypted DoT / Recursive Resolution| DoT
-    UB -.->|Fallback / Root Hints| ROOT
-    DoT -->|Validated Response| UB
-    UB -->|Cached & Validated Record| AGH
-    AGH -->|Filtered Response| Clients
+    Clients -->|"DNS Queries (:53)"| AGH
+    AGH -->|"Local Upstream (127.0.0.1:5335)"| UB
+    UB -->|"Encrypted DoT (:853)"| DoT
+    UB -.->|"Fallback Resolution"| ROOT
+    DoT -->|"Validated DNS Records"| UB
+    UB -->|"Cached Responses"| AGH
+    AGH -->|"Filtered Responses"| Clients
 ```
 
 ### Component Port Mapping
