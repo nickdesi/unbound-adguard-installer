@@ -40,7 +40,6 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 ## [3.4.1] - 2026-05-16
 
 ### Ajouté
-- **Plugin Graphify** pour OpenCode avec instructions AGENTS.md
 - **Option reset mot de passe** AdGuard Home dans le menu interactif
 - **Détection limites cgroup LXC** (CPU/RAM) pour auto-config précise
 - **Préfetch parallèle** AdGuard Home pendant l'installation Unbound
