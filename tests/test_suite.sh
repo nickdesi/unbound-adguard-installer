@@ -284,6 +284,23 @@ test_performance_defaults() {
     fi
 }
 
+test_unbound_runtime_service() {
+    echo ""
+    echo "=== Testing Persistent Unbound Runtime Directory ==="
+
+    local script
+    script="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/install_unbound_interactive.sh"
+
+    if grep -q 'setup_unbound_runtime_service' "$script" \
+        && grep -q 'before unbound' "$script" \
+        && grep -q 'rc-update add unbound-runtime boot' "$script" \
+        && grep -q 'mkdir -p /run/unbound' "$script"; then
+        pass "Unbound runtime directory is prepared before boot service"
+    else
+        fail "Unbound runtime directory boot service is missing"
+    fi
+}
+
 test_power_of_two_edge() {
     echo ""
     echo "=== Testing Power of Two Edge Cases ==="
@@ -457,6 +474,7 @@ run_all_tests() {
     test_power_of_two
     test_atomic_write
     test_performance_defaults
+    test_unbound_runtime_service
     test_power_of_two_edge
     test_count_cpuset_cpus
     test_performance_profile_boundaries
@@ -506,6 +524,7 @@ Tests Available:
     - validate_ipv4_edge
     - atomic_write
     - performance_defaults
+    - unbound_runtime_service
     - all (default)
 
 Examples:
@@ -553,6 +572,7 @@ if [[ -n "$SPECIFIC_TEST" ]]; then
         validate_ipv4_edge) test_validate_ipv4_edge ;;
         atomic_write) test_atomic_write ;;
         performance_defaults) test_performance_defaults ;;
+        unbound_runtime_service) test_unbound_runtime_service ;;
         *)
             echo "Unknown test: $SPECIFIC_TEST"
             show_usage

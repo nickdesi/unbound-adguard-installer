@@ -840,6 +840,35 @@ EOF
     msg_ok "Tuning OpenRC: rc_ulimit=\"-n 65536 -u 4096\", nice=5"
 }
 
+setup_unbound_runtime_service() {
+    local service_file="/etc/init.d/unbound-runtime"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "  [DRY-RUN] Configure unbound-runtime before unbound at boot"
+        return 0
+    fi
+
+    cat > "$service_file" <<'EOF'
+#!/sbin/openrc-run
+description="Prepare Unbound runtime directory"
+
+depend() {
+    need localmount
+    before unbound
+}
+
+start() {
+    ebegin "Preparing /run/unbound"
+    mkdir -p /run/unbound || { eend 1; return 1; }
+    chown unbound:unbound /run/unbound
+    eend $?
+}
+EOF
+    chmod 755 "$service_file"
+    rc-update add unbound-runtime boot >/dev/null
+    rc-service unbound-runtime start
+}
+
 install_unbound() {
     if ! apk info -e unbound &>/dev/null; then
         msg_info "Installation du paquet Unbound"
@@ -849,6 +878,7 @@ install_unbound() {
         msg_ok "Paquet Unbound déjà présent"
     fi
 
+    setup_unbound_runtime_service
     calculate_optimized_settings
 
     if [[ -f "/etc/unbound/unbound.conf" ]]; then
