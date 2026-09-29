@@ -1247,7 +1247,7 @@ try:
     config['dns']['enable_dnssec'] = False  # Unbound already validates DNSSEC
     config['dns']['cache_enabled'] = False  # Unbound handles DNS caching
     config['dns']['cache_size']    = 4096   # Keep positive to satisfy AGH validation
-    config['dns']['disable_ipv6']  = True
+    config['dns']['disable_ipv6']  = False
     config['dns']['ratelimit']     = 0      # Disable rate-limiting for local performance
 
     with open("$AGH_YAML", 'w') as f:

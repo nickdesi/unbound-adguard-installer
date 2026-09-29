@@ -282,6 +282,12 @@ test_performance_defaults() {
     else
         fail "Benchmark CLI option missing"
     fi
+
+    if grep -q "config\['dns'\]\['disable_ipv6'\].*= False" "$script"; then
+        pass "AdGuard IPv6 DNS responses remain enabled"
+    else
+        fail "AdGuard IPv6 DNS responses are disabled"
+    fi
 }
 
 test_unbound_runtime_service() {
